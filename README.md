@@ -103,8 +103,10 @@ Excel report with columns:
 
 If you use this pipeline in your research, please cite:
 ```
-GC-MS Auto-Identification Pipeline. https://github.com/[your-username]/gcms-pipeline
+GC-MS Auto-Identification Pipeline. https://github.com/goho12193415-a11y/gcms-pipeline
 ```
+
+Author contact: goho12193415@gmail.com
 
 ## License
 

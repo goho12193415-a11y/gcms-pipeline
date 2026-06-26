@@ -380,22 +380,45 @@ def detect_peaks(rts, tics, spectra):
 # BACKGROUND FILTER
 # ============================================================
 def classify_peak(mz_int_pairs):
-    """Check if peak is air/water, column bleed, plasticizer, or real."""
-    mz_list = [int(round(m)) for m, i in mz_int_pairs[:10]]
+    """3-tier classification:
+    L1: Natural products (aldehydes, ketones, alcohols, esters, terpenes, etc.)
+    L2: Suspected contaminants (branched alkanes, siloxanes, glycol ethers, phthalates)
+    L3: Confirmed background (air/water, column bleed)
+    Returns (tier, label, keep_for_matching)
+    """
+    mz_list = [int(round(m)) for m, i in mz_int_pairs[:15]]
+    bp = mz_list[0] if mz_list else 0
 
-    air_hits = sum(1 for m in AIR_IONS if m in mz_list[:5])
-    if air_hits >= 3:
-        return 'air'
+    # == L3: Confirmed background (ignore entirely) ==
+    # Air/water: dominated by m/z 18, 28, 32, 40, 44
+    air_count = sum(1 for m in AIR_IONS if m in mz_list[:8])
+    if air_count >= 5:
+        return ('L3', 'Air/Water', False)
 
-    bleed_hits = sum(1 for m in BLEED_IONS if m in mz_list)
-    if bleed_hits >= 2:
-        return 'bleed'
+    # Column bleed: siloxane pattern m/z 73 + 147 + 207
+    bleed_count = sum(1 for m in BLEED_IONS if m in mz_list)
+    if bleed_count >= 2:
+        return ('L3', 'Column Bleed', False)
 
-    phthalate_hits = sum(1 for m in PHTHALATE_IONS if m in mz_list)
-    if phthalate_hits >= 2 and 149 in mz_list:
-        return 'plasticizer'
+    # == L2: Suspected contaminants (keep but flag) ==
+    # Phthalate plasticizers: m/z 149 dominant
+    if 149 in mz_list[:5]:
+        return ('L2', 'Plasticizer', True)
 
-    return 'real'
+    # Branched alkanes: BP=57 with strong 43,71,85 pattern
+    if bp == 57 and all(m in mz_list for m in [43, 71, 85]):
+        return ('L2', 'Branched Alkane', True)
+
+    # Siloxane derivatives: BP=73 without full column bleed
+    if bp == 73:
+        return ('L2', 'Siloxane Derivative', True)
+
+    # Glycol ethers / PEG: BP=45 with large fragment gaps
+    if bp == 45 and len(mz_list) < 12:
+        return ('L2', 'Glycol/PEG Derivative', True)
+
+    # == L1: Natural products ==
+    return ('L1', 'Natural Product', True)
 
 
 # ============================================================
@@ -424,25 +447,20 @@ def process_sample(filepath, library, output_path):
         if len(clean) < 5:
             continue
 
-        # Classify
-        category = classify_peak(clean[:15])
-        if category in ('bleed', 'plasticizer'):
-            continue
-        if category == 'air':
-            # Check air dominance more strictly
+        # Classify (3-tier system)
+        tier, peak_label, keep_for_matching = classify_peak(clean[:15])
+        if not keep_for_matching:
+            continue  # Only skip L3 (air/bleed)
+
+        # For L2 peaks, skip the strict air filter
+        if tier == 'L1':
+            # Remove air ions for cleaner matching
             air_count = sum(1 for m, i in clean[:12] if m in AIR_IONS)
             if air_count >= 6:
-                continue  # Skip heavily air-dominated peaks
-            # Try after removing air ions
-            clean2 = [(m, i) for m, i in clean if m not in AIR_IONS]
-            if len(clean2) < 6:
                 continue
-            clean = clean2
-
-        # Spectrum quality check: need at least one diagnostic ion above m/z 50
-        high_mz_ions = [(m, i) for m, i in clean if m > 50]
-        if len(high_mz_ions) < 3:
-            continue
+            clean2 = [(m, i) for m, i in clean if m not in AIR_IONS]
+            if len(clean2) >= 6:
+                clean = clean2
 
         # Match against library
         matches = []
@@ -500,6 +518,8 @@ def process_sample(filepath, library, output_path):
             'formula': comp.get('formula', ''),
             'si': si,
             'confidence': confidence,
+            'tier': tier,
+            'peak_type': peak_label,
         })
 
     # Deduplicate
@@ -540,9 +560,9 @@ def _write_excel(results, path, sample_name):
     df = Font(name='Arial', size=10)
     da = Alignment(horizontal='center', vertical='center')
 
-    hdrs = ['No.', 'RT(min)', 'Compound', 'CAS', 'SI', 'Confidence',
-            'Peak Area', 'Peak Height', 'Formula']
-    widths = [5, 10, 38, 15, 7, 10, 16, 16, 16]
+    hdrs = ['No.', 'RT(min)', 'Compound', 'CAS', 'SI', 'Confidence', 'Tier',
+            'Peak Type', 'Peak Area', 'Peak Height', 'Formula']
+    widths = [5, 10, 35, 15, 7, 10, 6, 14, 16, 16, 16]
 
     for c, (h, w) in enumerate(zip(hdrs, widths), 1):
         cell = ws.cell(row=1, column=c, value=h)
@@ -551,13 +571,25 @@ def _write_excel(results, path, sample_name):
         cell.border = bd
         ws.column_dimensions[openpyxl.utils.get_column_letter(c)].width = w
 
+    l2_fill = PatternFill('solid', fgColor='FFC000')  # Orange for L2 contaminants
+    l3_fill = PatternFill('solid', fgColor='FF9999')  # Red for L3 background
+
     for i, r in enumerate(results, 2):
         vals = [i - 1, r['rt'], r['compound'], r['cas'], r['si'],
-                r['confidence'], r['area'], r['tic'], r.get('formula', '')]
+                r['confidence'], r.get('tier', ''), r.get('peak_type', ''),
+                r['area'], r['tic'], r.get('formula', '')]
         for c, v in enumerate(vals, 1):
             cell = ws.cell(row=i, column=c, value=v)
             cell.font = df; cell.alignment = da; cell.border = bd
-        fill = gf if r['confidence'] == 'High' else (yf if r['confidence'] == 'Medium' else None)
+
+        # Color coding: L1=green/yellow, L2=orange, L3=red
+        tier = r.get('tier', 'L1')
+        if tier == 'L2':
+            fill = l2_fill
+        elif tier == 'L3':
+            fill = l3_fill
+        else:
+            fill = gf if r['confidence'] == 'High' else (yf if r['confidence'] == 'Medium' else None)
         if fill:
             for c in range(1, len(hdrs) + 1):
                 ws.cell(row=i, column=c).fill = fill

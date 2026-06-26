@@ -49,25 +49,24 @@ To export from Xcalibur: `File → Export → Text (.txt)` with "All scans" sele
 
 ## Spectral Library
 
-A curated MSP-format spectral library of **300 compounds** with NIST-verified reference EI-MS spectra covering marine algae, food volatiles, Maillard reaction products, and environmental VOCs:
+A curated MSP-format spectral library of **300 compounds** organized by application domain. All spectra verified against NIST reference data for base peak accuracy.
 
-| Class | Count | Examples |
-|-------|:-----:|----------|
-| Aldehydes | 32 | Hexanal, (E)-2-Hexenal, Nonanal, (E,Z)-2,6-Nonadienal, Methional |
-| Ketones | 28 | 2-Heptanone, beta-Ionone, Damascenone, Megastigmatrienone |
-| Alcohols | 22 | 1-Octen-3-ol, 1-Penten-3-ol, Geosmin, 2-Methylisoborneol |
-| Terpenes | 55 | Limonene, beta-Caryophyllene, Germacrene D, Phytol, Neophytadiene |
-| Pyrazines | 20 | 2,5-Dimethylpyrazine, 2-Isobutyl-3-methoxypyrazine, 3-Ethyl-2,5-dimethylpyrazine |
-| Sulfur Compounds | 14 | Dimethyl sulfide, Benzothiazole, 2-Methyl-3-furanthiol, 2-Acetylthiazole |
-| Thiazoles/Oxazoles | 10 | 2-Isobutylthiazole, Trimethylthiazole, 2,3,5-Trimethyloxazole |
-| Halogenated | 20 | Iodoform, 1-Iodoheptane, 2,6-Dibromophenol, Bromoform, Trichlorophenol |
-| Furans/Furanones | 18 | 2-Pentylfuran, Furfural, Furaneol, Maltol, Cyclotene |
-| Pyrroles | 8 | 2-Acetylpyrrole, 2-Acetyl-1-pyrroline, 2-Formylpyrrole |
-| Phenols | 18 | Guaiacol, Eugenol, 4-Vinylguaiacol, 2,4,6-Tribromophenol |
-| Acids | 14 | Acetic acid, Hexanoic acid, Nonanoic acid, Isovaleric acid |
-| Esters/Lactones | 20 | gamma-Butyrolactone, Benzyl acetate, Methyl salicylate |
-| Aromatics | 12 | Styrene, Naphthalene, Toluene, p-Cymene |
-| Others | 14 | BHT, Squalene, alpha-Isomethylionone, Megastigmatrienone |
+### Quick Lookup by Analysis Type
+
+| Application | Count | Key Markers |
+|-------------|:-----:|-------------|
+| **Marine & Algae** | 41 | DMS, halogenated phenols, iodoalkanes, 1-penten-3-ol, geosmin, (E,Z)-2,6-nonadienal |
+| **Maillard & Thermal** | 65 | Pyrazines, furans, thiazoles, Strecker aldehydes, pyrroles, furanones |
+| **Fruity & Floral** | 51 | Monoterpenes, ionones, damascenones, lactones, benzaldehyde, esters |
+| **Lipid Oxidation** | 32 | Alkanals, 2-alkenals, 2,4-dienals, 1-octen-3-ol/one, alkylfurans |
+| **Sesquiterpenes** | 30 | Caryophyllene, cadinenes, muuroles, elemenes, oxygenated sesquiterpenes |
+| **Fermented & Spoilage** | 21 | Short-chain acids, ethyl esters, acetoin, 2,3-butanediol |
+| **Environmental** | 17 | Phthalates, BHT, BTEX, naphthalenes |
+| **Carotenoid Degradation** | 16 | Ionones, damascenones, safranal, megastigmatrienone |
+| **Fresh & Green** | 15 | C6 aldehydes/alcohols, hexenals, hexenols |
+| **Phenolic & Smoky** | 11 | Guaiacol, eugenol, vanillin, vinylguaiacol, cresols |
+
+See [category_index.json](category_index.json) for the complete categorized compound list.
 
 ### Expanding the Library
 

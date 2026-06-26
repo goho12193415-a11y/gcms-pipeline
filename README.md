@@ -49,22 +49,23 @@ To export from Xcalibur: `File → Export → Text (.txt)` with "All scans" sele
 
 ## Spectral Library
 
-`food_volatiles.msp` contains **200 compounds** with NIST-verified reference EI-MS spectra:
+A curated MSP-format spectral library of **250 compounds** with NIST-verified reference EI-MS spectra covering marine algae, food volatiles, and environmental VOCs:
 
 | Class | Count | Examples |
 |-------|:-----:|----------|
-| Aldehydes | 25 | Hexanal, (E)-2-Hexenal, Nonanal, (E,Z)-2,6-Nonadienal |
-| Ketones | 20 | 2-Heptanone, beta-Ionone, 6-Methyl-5-hepten-2-one |
-| Alcohols | 18 | 1-Octen-3-ol, 1-Penten-3-ol, Geosmin |
+| Aldehydes | 30 | Hexanal, (E)-2-Hexenal, Nonanal, (E,Z)-2,6-Nonadienal |
+| Ketones | 25 | 2-Heptanone, beta-Ionone, Damascenone, 6-Methyl-5-hepten-2-one |
+| Alcohols | 20 | 1-Octen-3-ol, 1-Penten-3-ol, Geosmin |
 | Terpenes | 55 | Limonene, beta-Caryophyllene, Germacrene D, Phytol |
-| Sulfur Compounds | 8 | Dimethyl sulfide, Dimethyl disulfide, Benzothiazole |
-| Halogenated | 12 | Iodoform, 1-Iodoheptane, 2,6-Dibromophenol |
-| Pyrazines | 8 | 2,5-Dimethylpyrazine, 2,3,5-Trimethylpyrazine |
-| Furans | 10 | 2-Pentylfuran, Furfural, 2-Acetylfuran |
-| Phenols | 12 | Guaiacol, Eugenol, 4-Vinylguaiacol |
+| Sulfur Compounds | 10 | Dimethyl sulfide, Dimethyl disulfide, 2-Acetylthiazole, Benzothiazole |
+| Halogenated | 16 | Iodoform, 1-Iodoheptane, 2,6-Dibromophenol, Bromoform |
+| Pyrazines | 14 | 2,5-Dimethylpyrazine, 2-Isobutyl-3-methoxypyrazine |
+| Furans | 12 | 2-Pentylfuran, Furfural, 4-Hydroxy-2,5-dimethyl-3(2H)-furanone |
+| Phenols | 16 | Guaiacol, Eugenol, 4-Vinylguaiacol, 2,4,6-Tribromophenol |
 | Acids | 12 | Acetic acid, Hexanoic acid, Nonanoic acid |
-| Esters/Lactones | 10 | gamma-Butyrolactone, gamma-Nonalactone |
-| N-Compounds | 6 | Indole, 2-Acetylpyrrole, 3-Methylindole |
+| Esters/Lactones | 16 | gamma-Butyrolactone, Benzyl acetate, Methyl salicylate |
+| Aromatics | 10 | Styrene, Naphthalene, Toluene, p-Cymene |
+| N-Compounds | 8 | Indole, 2-Acetylpyrrole, 2-Acetyl-1-pyrroline |
 | Others | 9 | BHT, 2-MIB, Neophytadiene, Squalene |
 
 ### Expanding the Library

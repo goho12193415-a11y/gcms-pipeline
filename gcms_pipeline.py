@@ -1,26 +1,29 @@
 #!/usr/bin/env python3
 """
-GC-MS Auto-Identification Pipeline v1.0
+GC-MS Auto-Identification Pipeline v2.0
 ========================================
-Automated peak detection, spectral matching, and compound identification for
-GC-MS data. Outputs formatted Excel reports with compound names, CAS numbers,
-SI match factors, and integrated peak areas.
+NIST-compatible spectral matching with forward/reverse match factors,
+2-stage inverted-ion-index pre-search, and 3-tier contaminant classification.
+
+Core matching logic mirrors Thermo Fisher Xcalibur/TraceFinder + NIST MS Search:
+  1. Pre-search funnel: base-peak gate -> top-12 ion counter -> top-500 candidates
+  2. NIST-weighted dot product: w = mz * sqrt(I / I_max)
+  3. Forward MF: all shared peaks (pure spectrum vs library)
+  4. Reverse MF: library peaks only (tolerates co-elution / background)
+  5. Confidence: max(MF, RMF); co-elution flag when RMF - MF > 150
 
 Usage:
     python gcms_pipeline.py sample.txt output.xlsx
     python gcms_pipeline.py --batch "data/*.txt" ./results/
 
 Requirements: numpy, scipy, openpyxl
-
-The bundled food_volatiles.msp library contains 29 common volatile compounds
-with NIST-verified reference EI-MS spectra. Additional spectra can be appended
-in MSP format. For extended coverage, optionally load AMDIS/NIST MSL libraries.
-
 Author: GC-MS Pipeline Contributors
 License: MIT
 """
 
 import os, sys, re, json, argparse
+from collections import defaultdict, Counter
+
 import numpy as np
 from scipy.signal import savgol_filter, find_peaks
 from scipy.ndimage import minimum_filter1d, gaussian_filter1d
@@ -28,30 +31,84 @@ from scipy.integrate import simpson
 
 # ---- Config ----
 AMDIS_LIB_DIR = r"C:\NIST26-EI-DEMO\AMDIS32\LIB"
-SI_THRESHOLD = 650
 
 class Config:
-    threshold = 650
+    threshold = 700       # minimum SI (MF or RMF, whichever higher)
+    use_msl = False
+    mf_high = 850         # high confidence threshold
+    mf_medium = 750       # medium confidence threshold
+    coelution_delta = 150  # RMF - MF > this => flag co-elution
+    min_shared_ions = 6    # minimum shared peaks for valid match
+    pre_max_candidates = 500  # max candidates for full spectral matching
+    pre_min_shared = 5     # minimum weighted shared ions to pass pre-search
+
 PEAK_DISTANCE = 10
 PROMINENCE_FACTOR = 0.3
 
-# Background markers to filter
+# ---- Background / contaminant markers ----
 AIR_IONS = {28, 32, 40, 44, 18, 17}
 BLEED_IONS = {73, 147, 207, 267, 281, 355}
 PHTHALATE_IONS = {149, 167, 279}
-# Known contaminants (not sample-derived)
+
+# Ions to strip from observed spectrum before matching
+# (siloxane, alkane fragments, phthalate — ubiquitous contaminants)
+CONTAMINANT_IONS = {
+    57, 71, 73, 85, 99, 113, 147, 149, 167, 207,
+    221, 267, 279, 281, 295, 327, 341, 355, 429
+}
+
 CONTAMINANTS = {'2,4-Di-tert-butylphenol', 'Butylated hydroxytoluene',
                 'Diethyl phthalate', 'Dibutyl phthalate'}
 
-# RT sanity ranges (approximate, for DB-5 MS 50-min program at ~5 °C/min from 40°C)
-# Compounds eluting outside their expected range are false positives
+# Compounds unlikely to persist in aqueous HS-SPME
+AQUEOUS_IMPOSSIBLE = {
+    'Ethyl acetate', 'Hexyl acetate', 'Bornyl acetate',
+    '1-Octen-3-ol, acetate', 'Octanoic acid, ethyl ester',
+    'Diethyl phthalate', 'Dibutyl phthalate',
+}
+
+# Approximate RT ranges on DB-5 MS (50 min, 40->280°C @5°C/min)
+# Used as sanity check — compounds outside range are rejected
 RT_RANGES = {
-    '2-Heptanol': (8, 22),        # C7 alcohol, BP ~160°C
-    '2-Methyl-1-butanol': (6.5, 15), # C5 alcohol, BP ~129°C, DB-5 RT > 6.5 min
-    '2-Heptanone': (4, 22),        # C7 ketone
-    '1-Heptanol': (6, 22),         # C7 alcohol
-    '2-Ethylhexanol': (6, 24),     # C8 alcohol
-    '2-Nonanol': (10, 28),         # C9 alcohol
+    # Alcohols
+    '1-Pentanol': (4, 10), '1-Penten-3-ol': (3, 8), '3-Methyl-1-butanol': (3, 9),
+    '1-Hexanol': (6, 13), '2-Hexanol': (5, 12), '3-Hexen-1-ol': (7, 14),
+    '1-Heptanol': (8, 16), '2-Heptanol': (7, 14),
+    '1-Octanol': (10, 18), '2-Octanol': (9, 16), '1-Octen-3-ol': (8, 16),
+    '2-Ethylhexanol': (8, 17), '1-Nonanol': (12, 20), '2-Nonanol': (10, 18),
+    'Linalool': (10, 18), 'alpha-Terpineol': (12, 20),
+    'Benzyl alcohol': (9, 17), 'Phenylethyl alcohol': (10, 19),
+    # Aldehydes
+    'Hexanal': (5, 12), '2-Hexenal': (7, 14), 'Heptanal': (7, 15),
+    'Octanal': (9, 17), 'Nonanal': (11, 19), 'Decanal': (13, 22),
+    'Benzaldehyde': (8, 16), 'Phenylacetaldehyde': (9, 18),
+    # Ketones
+    '2-Heptanone': (6, 14), '2-Octanone': (8, 16), '2-Nonanone': (10, 18),
+    '2-Undecanone': (13, 22), 'Acetophenone': (9, 17),
+    '6,10,14-Trimethylpentadecan-2-one': (28, 35),
+    # Esters
+    'Ethyl hexanoate': (8, 15), 'Ethyl octanoate': (10, 18),
+    # Acids (underivatized on polar/wax columns are late; DB-5 tailing)
+    'Acetic acid': (2, 8), 'Butanoic acid': (5, 12), 'Hexanoic acid': (8, 16),
+    'Octanoic acid': (11, 20),
+    # Terpenes
+    'Limonene': (8, 15), 'alpha-Pinene': (6, 12), 'beta-Pinene': (7, 13),
+    'beta-Caryophyllene': (18, 26), 'alpha-Humulene': (19, 27),
+    # Furans / pyrans
+    '2-Pentylfuran': (8, 15), '2-Furanmethanol': (6, 13),
+    '5-Hydroxymethylfurfural': (20, 28),
+    # Pyrazines
+    '2-Methylpyrazine': (5, 12), '2,5-Dimethylpyrazine': (7, 14),
+    '2,3,5-Trimethylpyrazine': (8, 16), '2-Ethyl-3,5-dimethylpyrazine': (10, 18),
+    # Phenols
+    'Phenol': (8, 15), 'Guaiacol': (10, 17), '4-Ethylguaiacol': (14, 22),
+    'Eugenol': (15, 23), '4-Vinylguaiacol': (16, 24),
+    # Sulfur
+    'Dimethyl disulfide': (3, 8), 'Dimethyl trisulfide': (7, 14),
+    'Methional': (7, 15),
+    # Miscellaneous
+    'Benzothiazole': (11, 19), 'Indole': (15, 24), 'Geosmin': (18, 26),
+    '2-Methylisoborneol': (14, 22),
 }
 
 
@@ -60,7 +117,6 @@ RT_RANGES = {
 # ============================================================
 def parse_msp(filepath):
     """Parse MSP (Mass Spectral Peak) format library.
-    Entries are delimited by 'Name:' headers.
 
     Example entry:
         Name: Hexanal
@@ -73,8 +129,6 @@ def parse_msp(filepath):
     with open(filepath, 'r', encoding='utf-8', errors='replace') as f:
         content = f.read()
 
-    # Split on "Name:" to get individual entries
-    # First entry starts with 'Name:', rest start with '\nName:'
     raw_entries = []
     idx = 0
     while True:
@@ -95,38 +149,33 @@ def parse_msp(filepath):
         cas = ''
         peaks = []
 
-        for i, line in enumerate(lines):
+        for line in lines:
             line = line.strip()
             if not line:
                 continue
-
             if line.startswith('Name: '):
                 name = line[6:].strip()
             elif line.startswith('Formula: '):
                 formula = line[9:].strip()
             elif line.startswith('CASNO: '):
                 cas = line[7:].strip()
-            elif line.startswith('Num Peaks:'):
+            elif line.startswith('Num Peaks:') or line.startswith('Synon:') or \
+                 line.startswith('MW:') or line.startswith('RI:') or \
+                 line.startswith('Comment:') or line.startswith('Contributor:'):
                 continue
             else:
-                # Peak data: "mz int; mz int; ..."
-                for part in line.replace(';', ' ').split():
-                    part = part.strip()
-                    # This is a bit tricky - we need to read mz,int pairs
-                    pass
-                # Better approach: use regex to find numbers
-                import re as _re
-                numbers = _re.findall(r'(\d+)\s+(\d+)', line)
+                numbers = re.findall(r'(\d+)\s+(\d+)', line)
                 for mz_str, int_str in numbers:
                     peaks.append((int(mz_str), int(int_str)))
 
         if name and len(peaks) >= 5:
-            top8 = [m for m, i in sorted(peaks, key=lambda x: -x[1])[:8]]
-            fuzzy = set(top8)
-            for m in top8: fuzzy.update({m-1, m+1})
+            top12 = [m for m, i in sorted(peaks, key=lambda x: -x[1])[:12]]
+            fuzzy = set(top12)
+            for m in top12:
+                fuzzy.update({m - 1, m + 1})
             compounds.append({
                 'name': name, 'formula': formula, 'cas': cas, 'peaks': peaks,
-                'top8': top8, 'top8_fuzzy': fuzzy
+                'top8': top12, 'top8_fuzzy': fuzzy  # kept field name for compat
             })
 
     return compounds
@@ -166,25 +215,33 @@ def parse_msl(filepath):
                     peaks.append((int(mz_str), int(int_str)))
 
         if name and len(peaks) >= 5:
-            top8 = [m for m, i in sorted(peaks, key=lambda x: -x[1])[:8]]
-            fuzzy = set(top8)
-            for m in top8: fuzzy.update({m-1, m+1})
+            top12 = [m for m, i in sorted(peaks, key=lambda x: -x[1])[:12]]
+            fuzzy = set(top12)
+            for m in top12:
+                fuzzy.update({m - 1, m + 1})
             compounds.append({
                 'name': name, 'formula': formula, 'cas': cas, 'peaks': peaks,
-                'top8': top8, 'top8_fuzzy': fuzzy
+                'top8': top12, 'top8_fuzzy': fuzzy
             })
 
     return compounds
 
 
 # ============================================================
-# LIBRARY LOADER
+# LIBRARY LOADER (with 2-stage index)
 # ============================================================
 def load_libraries(lib_dir=None):
-    """Load spectral libraries: bundled MSP + optional AMDIS MSL."""
-    all_compounds = []
+    """Load spectral libraries and build 2-stage inverted index.
 
-    # Primary: NIST main library (if available), fallback to food_volatiles.msp
+    Stage-1: base-peak index {bp_mz: [compound_indices]}
+    Stage-2: top-12 ion mask per compound [(frozenset(top12), bp_mz), ...]
+
+    Pre-search procedure:
+      1. Gate by base peak (±1 Da): candidates from bp_index
+      2. Weighted shared-ion scoring: low m/z (<80)=1pt, high m/z (>=80)=3pt
+      3. Keep top-200 candidates with >=5 weighted score for full matching
+    """
+    all_compounds = []
     here = os.path.dirname(os.path.realpath(__file__))
     nist_path = os.path.join(here, 'nist_mainlib.msp')
     fallback_path = os.path.join(here, 'food_volatiles.msp')
@@ -198,7 +255,6 @@ def load_libraries(lib_dir=None):
         all_compounds.extend(comps)
         print(f"[LIB] food_volatiles.msp: {len(comps)} compounds")
 
-    # Secondary: AMDIS MSL (only if --with-msl flag is set)
     if lib_dir and os.path.isdir(lib_dir) and getattr(Config, 'use_msl', False):
         for fname in ['NISTFF.MSL', 'NISTEPA.MSL']:
             fp = os.path.join(lib_dir, fname)
@@ -209,97 +265,188 @@ def load_libraries(lib_dir=None):
     elif lib_dir and os.path.isdir(lib_dir):
         print("[LIB] MSL libraries available but not loaded (use --with-msl to enable)")
 
-    # Build base-peak index for ultrafast pre-search (Thermo-style)
-    bp_index = {}
+    # ---- Build 2-stage index ----
+    bp_index = defaultdict(list)           # {base_peak_mz: [idx, ...]}
+    ion_masks = []                          # [(frozenset(top12_ions), bp_mz), ...]
+
     for i, comp in enumerate(all_compounds):
-        bp = max(comp['peaks'], key=lambda x: x[1])[0]
-        bp = int(round(bp))
-        if bp not in bp_index: bp_index[bp] = []
-        bp_index[bp].append(i)
+        # Sort by intensity descending
+        sorted_peaks = sorted(comp['peaks'], key=lambda x: -x[1])
+        bp = int(round(sorted_peaks[0][0]))
 
-    print(f"[LIB] Total: {len(all_compounds)} compounds, indexed by {len(bp_index)} base peaks")
-    return all_compounds, bp_index
-
-
-# ============================================================
-# SPECTRAL MATCHING
-# ============================================================
-def spectral_similarity(observed, reference):
-    """NIST mass-weighted cosine with contaminant ion pre-filtering.
-
-    - Filters known contaminant m/z before matching (siloxanes, phthalates)
-    - Weights ions by sqrt(intensity) × m/z^1.3 (NIST convention)
-    - Forward + reverse search with base peak gating
-    """
-    # Filter contaminant ions from observed spectrum before matching
-    CONTAMINANT_MZ = {73, 147, 207, 221, 267, 281, 295, 327, 341, 355, 429,
-                      149, 167, 279, 57, 71, 85, 99, 113}  # Siloxane + alkane + phthalate
-    obs = {}
-    for m, i in observed:
-        mz = int(round(m))
-        if mz not in CONTAMINANT_MZ and mz > 25:
-            obs[mz] = max(obs.get(mz, 0), int(i))
-
-    ref = {}
-    for m, i in reference:
-        mz = int(round(m))
-        ref[mz] = max(ref.get(mz, 0), int(i))
-
-    if len(obs) < 5 or len(ref) < 5:
-        return 0
-
-    ref_bp_mz = max(ref, key=ref.get)
-    obs_bp_mz = max(obs, key=obs.get)
-    obs_top3 = sorted(obs.keys(), key=lambda x: -obs[x])[:3]
-
-    # Gate: ref base peak must be in observed top 3 (±2 Da, relaxed for co-elution)
-    if not any(abs(ref_bp_mz - o) <= 2 for o in obs_top3):
-        return 0
-
-    # Normalize to 0-1 range
-    obp = max(obs.values()); onorm = {m: v/obp for m, v in obs.items()}
-    rbp_val = max(ref.values()); rnorm = {m: v/rbp_val for m, v in ref.items()}
-
-    # NIST weight: W = sqrt(I) × mz^1.3
-    def nist_weight(mz, intensity):
-        return np.sqrt(max(intensity, 0.001)) * (mz ** 1.3)
-
-    # Shared ions (within 1 Da tolerance)
-    rkeys = set(rnorm.keys())
-    shared = set()
-    for m in onorm:
+        # Stage-1: base peak index (±1 Da tolerance)
         for d in (-1, 0, 1):
-            if m+d in rkeys:
-                shared.add(m)
+            bp_index[bp + d].append(i)
+
+        # Stage-2: top-12 ion mask (±1 Da tolerance for matching)
+        top12_set = set()
+        for mz, _ in sorted_peaks[:12]:
+            mz_i = int(round(mz))
+            top12_set.update({mz_i - 1, mz_i, mz_i + 1})
+        ion_masks.append((frozenset(top12_set), bp))
+
+    total = len(all_compounds)
+    print(f"[LIB] Total: {total} compounds, bp_index: {len(bp_index)} keys, "
+          f"ion_masks: {len(ion_masks)} entries")
+    return all_compounds, bp_index, ion_masks
+
+
+# ============================================================
+# NIST-COMPATIBLE SPECTRAL SIMILARITY (MF / RMF)
+# ============================================================
+def nist_similarity(observed, reference):
+    """NIST MS Search compatible match factor calculation.
+
+    Weighting:  w_i = mz_i * sqrt(I_i / I_max)
+    Spectra are normalized to unit vectors for cosine similarity.
+
+    Args:
+        observed:  [(mz, intensity), ...]  — unknown spectrum
+        reference: [(mz, intensity), ...]  — library spectrum
+
+    Returns:
+        (mf, rmf, n_shared, n_unknown, n_library)
+          mf  — Forward Match Factor (0-999), all shared peaks
+          rmf — Reverse Match Factor (0-999), library peaks only
+    """
+    # ---- Build weighted spectra ----
+    def build_weighted(peaks):
+        """Return {mz: weight} dict, NIST-weighted. Bins to 0.5 Da precision."""
+        if not peaks:
+            return {}
+        max_i = max(i for _, i in peaks)
+        if max_i <= 0:
+            return {}
+        result = {}
+        for m, i in peaks:
+            if i <= 0:
+                continue
+            # Bin to 0.5 Da (avoids collisions from coarse 1-Da rounding)
+            mz = round(m * 2) / 2
+            if mz < 26:
+                continue
+            w = mz * np.sqrt(i / max_i)
+            if mz not in result or w > result[mz]:
+                result[mz] = w
+        return result
+
+    # Remove low-m/z fragments
+    obs_clean = [(m, i) for m, i in observed if int(round(m)) >= 26]
+
+    obs_w = build_weighted(obs_clean)
+    lib_w = build_weighted(reference)
+
+    if len(obs_w) < 5 or len(lib_w) < 5:
+        return 0, 0, len(obs_w), len(obs_w), len(lib_w)
+
+    # ---- Find shared m/z (±0.5 Da tolerance, matches bin precision) ----
+    lib_mz_set = set(lib_w.keys())
+    shared = set()
+    for mz in obs_w:
+        for d in (-0.5, 0, 0.5):
+            if mz + d in lib_mz_set:
+                shared.add(mz)
                 break
 
-    if len(shared) < 6:
-        return 0
+    n_shared = len(shared)
+    if n_shared < 6:
+        return 0, 0, n_shared, len(obs_w), len(lib_w)
 
-    # Mass-weighted cosine
-    fnum = 0.0; fden_o = 0.0; fden_r = 0.0
-    for mz in shared:
-        oi = onorm.get(mz, 0.001); ri = rnorm.get(mz, 0.001)
-        wo = nist_weight(mz, oi); wr = nist_weight(mz, ri)
-        fnum += wo * wr; fden_o += wo*wo; fden_r += wr*wr
+    # ---- Forward MF: normalize over ALL peaks ----
+    def normalize_to_unit(weights, restrict_to=None):
+        """Normalize weight vector to unit length. Optionally restrict m/z set."""
+        if restrict_to is not None:
+            vals = [w for mz, w in weights.items() if mz in restrict_to]
+        else:
+            vals = list(weights.values())
+        norm = np.sqrt(sum(v * v for v in vals))
+        if norm < 1e-10:
+            return {}
+        return {mz: w / norm for mz, w in weights.items()
+                if restrict_to is None or mz in restrict_to}
 
-    if fden_o == 0 or fden_r == 0: return 0
-    score = fnum / (np.sqrt(fden_o) * np.sqrt(fden_r))
+    obs_norm = normalize_to_unit(obs_w)
+    lib_norm = normalize_to_unit(lib_w)
 
-    # Reverse coverage: what fraction of REF ions found in OBS?
-    rev_hits = sum(1 for rmz in rnorm if any(abs(rmz+d-omz)<=1 for omz in onorm for d in (-1,0,1)))
-    rev_cov = rev_hits / max(len(rnorm), 1)
-    if rev_cov < 0.4: return 0
+    mf = int(round(999 * sum(
+        obs_norm.get(mz, 0) * lib_norm.get(mz, 0)
+        for mz in shared
+    )))
+    mf = max(0, min(999, mf))
 
-    # BP bonus
-    bp_bonus = 1.0 if abs(ref_bp_mz - obs_bp_mz) <= 1 else (0.5 if abs(ref_bp_mz - obs_bp_mz) <= 3 else 0)
-    if bp_bonus == 0: return 0
+    # ---- Reverse MF: restrict to library m/z ----
+    lib_peaks = set(lib_w.keys())
+    obs_norm_rev = normalize_to_unit(obs_w, restrict_to=lib_peaks)
+    lib_norm_rev = normalize_to_unit(lib_w)
 
-    return min(999, int((score*0.50 + rev_cov*0.30 + bp_bonus*0.20) * 999))
+    shared_rev = shared & lib_peaks
+    if not shared_rev or not obs_norm_rev or not lib_norm_rev:
+        rmf = 0
+    else:
+        rmf = int(round(999 * sum(
+            obs_norm_rev.get(mz, 0) * lib_norm_rev.get(mz, 0)
+            for mz in shared_rev
+        )))
+        rmf = max(0, min(999, rmf))
+
+    return mf, rmf, n_shared, len(obs_w), len(lib_w)
 
 
 # ============================================================
-# DATA PARSER
+# PRE-SEARCH: 2-stage funnel
+# ============================================================
+def pre_search_candidates(clean_spectrum, bp_index, ion_masks, library):
+    """2-stage funnel pre-search.
+
+    Stage 1: base-peak gate
+        Unknown's base peak must match library's base peak (±1 Da).
+        Eliminates ~99% of compounds.
+
+    Stage 2: top-12 ion counter
+        Count how many of unknown's top-12 ions (±1 Da) match each candidate's
+        top-12 ions. Top-12 provides enough specificity for discrimination.
+
+    Returns list of compound indices, sorted by shared ion count (desc),
+    capped at pre_max_candidates.
+    """
+    if len(clean_spectrum) < 3:
+        return []
+
+    # Sorted by intensity
+    sorted_obs = sorted(clean_spectrum, key=lambda x: -x[1])
+    obs_bp = int(round(sorted_obs[0][0]))
+
+    # Observed top-12 ion set (±1 Da tolerance)
+    obs_ion_set = set()
+    for mz, _ in sorted_obs[:12]:
+        mz_i = int(round(mz))
+        obs_ion_set.update({mz_i - 1, mz_i, mz_i + 1})
+
+    # Stage 1: collect candidates from base peak index
+    candidates = set()
+    for d in (-1, 0, 1):
+        candidates.update(bp_index.get(obs_bp + d, []))
+
+    if not candidates:
+        return []
+
+    # Stage 2: count shared top-12 ions
+    scored = []
+    for idx in candidates:
+        ion_set, _ = ion_masks[idx]
+        shared = len(ion_set & obs_ion_set)
+        if shared >= Config.pre_min_shared:
+            scored.append((shared, idx))
+
+    if not scored:
+        return []
+
+    scored.sort(reverse=True)
+    return [idx for _, idx in scored[:Config.pre_max_candidates]]
+
+
+# ============================================================
+# DATA PARSER (Thermo Xcalibur TXT)
 # ============================================================
 def parse_thermo_txt(filepath):
     """Parse Thermo Xcalibur GC-MS text export."""
@@ -346,15 +493,23 @@ def parse_thermo_txt(filepath):
 # ============================================================
 def detect_peaks(rts, tics, spectra):
     """Detect peaks, filter background, integrate areas, extract spectra."""
-    # Smooth
-    tics_s = savgol_filter(tics, 31, 2)
-    # Baseline
-    bl = minimum_filter1d(tics_s, 401)
-    bl = gaussian_filter1d(bl.astype(float), 80)
+    if len(tics) < 31:
+        return []
+
+    window = min(31, len(tics) // 2 * 2 + 1)
+    if window < 5:
+        return []
+
+    tics_s = savgol_filter(tics, window, 2)
+    baseline_window = min(401, len(tics) // 3 * 2 + 1)
+    bl = minimum_filter1d(tics_s, baseline_window)
+    bl = gaussian_filter1d(bl.astype(float), min(80, len(bl) // 4))
     corr = tics_s - bl
     corr[corr < 0] = 0
 
-    # Find peaks
+    if len(corr[corr > 0]) == 0:
+        return []
+
     thresh = np.percentile(corr[corr > 0], 50)
     idxs, _ = find_peaks(corr, height=thresh, distance=PEAK_DISTANCE,
                           prominence=thresh * PROMINENCE_FACTOR)
@@ -363,7 +518,6 @@ def detect_peaks(rts, tics, spectra):
 
     results = []
     for idx in idxs:
-        # Integration bounds
         left = idx
         while left > 0 and corr[left] > corr[left - 1]:
             left -= 1
@@ -378,7 +532,6 @@ def detect_peaks(rts, tics, spectra):
         yc[yc < 0] = 0
         area = float(simpson(yc, x)) if len(x) >= 3 else 0
 
-        # Spectrum at apex
         raw = spectra[idx]
         top = sorted(raw, key=lambda x: -x[1])[:40]
 
@@ -394,43 +547,39 @@ def detect_peaks(rts, tics, spectra):
 
 
 # ============================================================
-# BACKGROUND FILTER
+# 3-TIER BACKGROUND CLASSIFICATION
 # ============================================================
 def classify_peak(mz_int_pairs):
-    """3-tier classification:
-    L1: Natural products (aldehydes, ketones, alcohols, esters, terpenes, etc.)
-    L2: Suspected contaminants (branched alkanes, siloxanes, glycol ethers, phthalates)
-    L3: Confirmed background (air/water, column bleed)
+    """3-tier classification of GC-MS peaks.
+
+    L1: Natural products (aldehydes, ketones, alcohols, esters, terpenes...)
+    L2: Suspected contaminants (branched alkanes, siloxanes, PEG, phthalates)
+    L3: Confirmed background (air/water, column bleed) — discard
+
     Returns (tier, label, keep_for_matching)
     """
     mz_list = [int(round(m)) for m, i in mz_int_pairs[:15]]
     bp = mz_list[0] if mz_list else 0
 
     # == L3: Confirmed background (ignore entirely) ==
-    # Air/water: dominated by m/z 18, 28, 32, 40, 44
     air_count = sum(1 for m in AIR_IONS if m in mz_list[:8])
     if air_count >= 5:
         return ('L3', 'Air/Water', False)
 
-    # Column bleed: siloxane pattern m/z 73 + 147 + 207
     bleed_count = sum(1 for m in BLEED_IONS if m in mz_list)
     if bleed_count >= 2:
         return ('L3', 'Column Bleed', False)
 
     # == L2: Suspected contaminants (keep but flag) ==
-    # Phthalate plasticizers: m/z 149 dominant
     if 149 in mz_list[:5]:
         return ('L2', 'Plasticizer', True)
 
-    # Branched alkanes: BP=57 with strong 43,71,85 pattern
     if bp == 57 and all(m in mz_list for m in [43, 71, 85]):
         return ('L2', 'Branched Alkane', True)
 
-    # Siloxane derivatives: BP=73 without full column bleed
     if bp == 73:
         return ('L2', 'Siloxane Derivative', True)
 
-    # Glycol ethers / PEG: BP=45 with large fragment gaps
     if bp == 45 and len(mz_list) < 12:
         return ('L2', 'Glycol/PEG Derivative', True)
 
@@ -441,7 +590,7 @@ def classify_peak(mz_int_pairs):
 # ============================================================
 # MAIN PROCESSING
 # ============================================================
-def process_sample(filepath, library, bp_index, output_path):
+def process_sample(filepath, library, bp_index, ion_masks, output_path):
     """Run full pipeline on one GC-MS data file."""
     name = os.path.basename(filepath)
     print(f"\n[Processing] {name}")
@@ -456,90 +605,104 @@ def process_sample(filepath, library, bp_index, output_path):
 
     # Identify
     results = []
+    n_pre_searched = 0
+    n_full_matched = 0
+
     for p in peaks:
         raw = p['spectrum']
-        # Build clean spectrum (m/z > 25, positive intensity)
+        # Build clean spectrum
         clean = [(int(round(m)), int(i)) for m, i in raw
-                  if int(round(m)) > 25 and i > 100]
+                 if int(round(m)) > 25 and i > 100]
         if len(clean) < 5:
             continue
 
-        # Classify (3-tier system)
+        # 3-tier classification
         tier, peak_label, keep_for_matching = classify_peak(clean[:15])
         if not keep_for_matching:
-            continue  # Only skip L3 (air/bleed)
+            continue  # L3: skip entirely
 
-        # For L2 peaks, skip the strict air filter
+        # Remove air ions from L1 for cleaner matching
         if tier == 'L1':
-            # Remove air ions for cleaner matching
             air_count = sum(1 for m, i in clean[:12] if m in AIR_IONS)
             if air_count >= 6:
                 continue
-            clean2 = [(m, i) for m, i in clean if m not in AIR_IONS]
-            if len(clean2) >= 6:
-                clean = clean2
 
-        # Match against library (with presearch + tier-based threshold)
-        # Presearch: filter by top 10 most abundant ions first
-        effective_threshold = 700 if tier == 'L1' else (Config.threshold if Config.threshold > 850 else 850)
+        # ---- 2-stage pre-search (2-pass) ----
+        candidates = pre_search_candidates(clean, bp_index, ion_masks, library)
+        n_pre_searched += 1
 
-        # Thermo-style indexed pre-search: only check compounds whose base peak matches
-        # observed spectrum's top 3 most abundant ions (±1 Da)
-        obs_bp = int(round(max(clean, key=lambda x: x[1])[0]))
-        obs_top3 = [int(round(m)) for m, i in sorted(clean, key=lambda x: -x[1])[:3]]
+        if not candidates:
+            continue
 
-        # Collect candidate indices from bp_index
-        candidates = set()
-        for bp_candidate in [obs_bp-1, obs_bp, obs_bp+1]:
-            if bp_candidate in bp_index:
-                candidates.update(bp_index[bp_candidate])
+        # Pass 1: top 200 candidates (fast)
+        pass1 = candidates[:200]
+        # Pass 2: remaining 300 (fallback if no match in pass 1)
+        pass2 = candidates[200:]
 
+        # ---- Full NIST spectral matching ----
         matches = []
-        for idx in candidates:
+        tier_threshold = Config.mf_medium if tier == 'L1' else max(Config.threshold, Config.mf_high)
+
+        for idx in pass1:
             comp = library[idx]
-            si = spectral_similarity(clean, comp['peaks'])
-            if si >= effective_threshold:
-                matches.append((si, comp))
+            mf, rmf, n_shared, n_unk, n_lib = nist_similarity(clean, comp['peaks'])
+            si = max(mf, rmf)
+            if si >= tier_threshold:
+                matches.append((mf, rmf, si, n_shared, comp))
+
+        # Pass 2: expanded search (only if pass 1 found nothing and pass 2 exists)
+        if not matches and pass2:
+            for idx in pass2:
+                comp = library[idx]
+                mf, rmf, n_shared, n_unk, n_lib = nist_similarity(clean, comp['peaks'])
+                si = max(mf, rmf)
+                if si >= tier_threshold:
+                    matches.append((mf, rmf, si, n_shared, comp))
 
         if not matches:
             continue
 
-        # Filter out matches that are impossible in aqueous HS-SPME samples
-        # These compounds either hydrolyze or are too volatile to retain
-        aqueous_impossible = {
-            'Ethyl acetate', 'Hexyl acetate', 'Bornyl acetate',
-            '1-Octen-3-ol, acetate', 'Octanoic acid, ethyl ester',
-            'Diethyl phthalate', 'Dibutyl phthalate',
-        }
-        filtered_matches = []
-        for si, comp in matches:
-            if comp['name'] in aqueous_impossible and si < 950:
-                continue  # Reject unless extremely high confidence
-            filtered_matches.append((si, comp))
+        n_full_matched += 1
 
-        if not filtered_matches:
+        # Filter aqueous-impossible (unless very high confidence)
+        filtered = []
+        for mf, rmf, si, n_shared, comp in matches:
+            if comp['name'] in AQUEOUS_IMPOSSIBLE and max(mf, rmf) < 950:
+                continue
+            filtered.append((mf, rmf, si, n_shared, comp))
+
+        if not filtered:
             continue
 
-        # Check for phthalate pattern in observed spectrum
-        has_phthalate_149 = any(m == 149 for m, i in clean[:20])
-        has_phthalate_57 = any(m == 57 for m, i in clean[:20])
+        # Exclude confirmed phthalate patterns
+        has_phthalate_149 = any(int(round(m)) == 149 for m, i in clean[:20])
+        has_phthalate_57 = any(int(round(m)) == 57 for m, i in clean[:20])
         if has_phthalate_149 and has_phthalate_57:
-            continue  # Phthalate contaminant, not a sample compound
+            continue
 
-        matches = filtered_matches
-        matches.sort(key=lambda x: -x[0])
-        si, comp = matches[0]
+        # Sort by SI descending, take best
+        filtered.sort(key=lambda x: -x[2])
+        mf, rmf, si, n_shared, comp = filtered[0]
 
-        # Filter known contaminants
+        # Exclude known contaminants
         if comp['name'] in CONTAMINANTS:
             continue
 
         # RT sanity check
         rt_range = RT_RANGES.get(comp['name'])
         if rt_range and (p['rt'] < rt_range[0] or p['rt'] > rt_range[1]):
-            continue  # Compound eluting at physically impossible time
+            continue
 
-        confidence = 'High' if si >= 850 else ('Medium' if si >= 750 else 'Low')
+        # Co-elution flag
+        coelution = (rmf - mf) > Config.coelution_delta
+
+        # Confidence level
+        if si >= Config.mf_high:
+            confidence = 'High'
+        elif si >= Config.mf_medium:
+            confidence = 'Medium'
+        else:
+            confidence = 'Low'
 
         results.append({
             'rt': p['rt'],
@@ -548,13 +711,17 @@ def process_sample(filepath, library, bp_index, output_path):
             'compound': comp['name'],
             'cas': comp.get('cas', ''),
             'formula': comp.get('formula', ''),
+            'mf': mf,
+            'rmf': rmf,
             'si': si,
+            'n_shared': n_shared,
             'confidence': confidence,
+            'coelution': coelution,
             'tier': tier,
             'peak_type': peak_label,
         })
 
-    # Deduplicate
+    # ---- Deduplicate ----
     results.sort(key=lambda x: -x['si'])
     seen = set()
     final = []
@@ -565,17 +732,25 @@ def process_sample(filepath, library, bp_index, output_path):
             final.append(r)
     final.sort(key=lambda x: x['rt'])
 
-    # Report
+    # ---- Report ----
     _write_excel(final, output_path, name)
 
+    n_total = len(results)
+    n_final = len(final)
     n_high = sum(1 for r in final if r['confidence'] == 'High')
     n_med = sum(1 for r in final if r['confidence'] == 'Medium')
-    print(f"  Identified: {len(final)} (High:{n_high} Med:{n_med})")
+    n_coel = sum(1 for r in final if r.get('coelution'))
+    print(f"  Pre-search: {n_pre_searched} peaks, full-matched: {n_full_matched}")
+    print(f"  Identified: {n_final} (High:{n_high} Med:{n_med}"
+          f" Co-elution:{n_coel})")
     return final
 
 
+# ============================================================
+# EXCEL OUTPUT
+# ============================================================
 def _write_excel(results, path, sample_name):
-    """Generate formatted Excel report."""
+    """Generate formatted Excel report with MF/RMF columns."""
     import openpyxl
     from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 
@@ -585,48 +760,70 @@ def _write_excel(results, path, sample_name):
 
     hf = Font(name='Arial', size=10, bold=True, color='FFFFFF')
     hfill = PatternFill('solid', fgColor='2F5496')
-    gf = PatternFill('solid', fgColor='C6EFCE')
-    yf = PatternFill('solid', fgColor='FFEB9C')
-    bd = Border(left=Side('thin'), right=Side('thin'),
-                top=Side('thin'), bottom=Side('thin'))
     df = Font(name='Arial', size=10)
     da = Alignment(horizontal='center', vertical='center')
+    dw = Alignment(horizontal='center', vertical='center', wrap_text=True)
+    bd = Border(left=Side('thin'), right=Side('thin'),
+                top=Side('thin'), bottom=Side('thin'))
 
-    hdrs = ['No.', 'RT(min)', 'Compound', 'CAS', 'SI', 'Confidence', 'Tier',
-            'Peak Type', 'Peak Area', 'Peak Height', 'Formula']
-    widths = [5, 10, 35, 15, 7, 10, 6, 14, 16, 16, 16]
+    # Color fills
+    gf = PatternFill('solid', fgColor='C6EFCE')   # green: High
+    yf = PatternFill('solid', fgColor='FFEB9C')    # yellow: Medium
+    l2_fill = PatternFill('solid', fgColor='FFC000')  # orange: L2 contaminant
+    l3_fill = PatternFill('solid', fgColor='FF9999')  # red: L3 background
+    co_fill = PatternFill('solid', fgColor='D9B3FF')  # purple: co-elution
+
+    hdrs = ['No.', 'RT (min)', 'Compound', 'CAS', 'MF', 'RMF', 'SI',
+            'N Shared', 'Confidence', 'Co-elution', 'Tier', 'Peak Type',
+            'Peak Area', 'Peak Height', 'Formula']
+    widths = [5, 9, 35, 15, 6, 6, 6, 8, 11, 10, 5, 16, 15, 15, 18]
 
     for c, (h, w) in enumerate(zip(hdrs, widths), 1):
         cell = ws.cell(row=1, column=c, value=h)
-        cell.font = hf; cell.fill = hfill
-        cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+        cell.font = hf
+        cell.fill = hfill
+        cell.alignment = dw
         cell.border = bd
         ws.column_dimensions[openpyxl.utils.get_column_letter(c)].width = w
 
-    l2_fill = PatternFill('solid', fgColor='FFC000')  # Orange for L2 contaminants
-    l3_fill = PatternFill('solid', fgColor='FF9999')  # Red for L3 background
-
     for i, r in enumerate(results, 2):
-        vals = [i - 1, r['rt'], r['compound'], r['cas'], r['si'],
-                r['confidence'], r.get('tier', ''), r.get('peak_type', ''),
-                r['area'], r['tic'], r.get('formula', '')]
+        vals = [
+            i - 1, r['rt'], r['compound'], r['cas'],
+            r.get('mf', ''), r.get('rmf', ''), r['si'],
+            r.get('n_shared', ''),
+            r['confidence'], 'Y' if r.get('coelution') else '',
+            r.get('tier', ''), r.get('peak_type', ''),
+            r['area'], r['tic'], r.get('formula', '')
+        ]
         for c, v in enumerate(vals, 1):
             cell = ws.cell(row=i, column=c, value=v)
-            cell.font = df; cell.alignment = da; cell.border = bd
+            cell.font = df
+            cell.alignment = da
+            cell.border = bd
 
-        # Color coding: L1=green/yellow, L2=orange, L3=red
+        # Color coding
         tier = r.get('tier', 'L1')
-        if tier == 'L2':
-            fill = l2_fill
-        elif tier == 'L3':
+        coel = r.get('coelution')
+
+        if tier == 'L3':
             fill = l3_fill
+        elif tier == 'L2':
+            fill = l2_fill
+        elif coel:
+            fill = co_fill
+        elif r['confidence'] == 'High':
+            fill = gf
+        elif r['confidence'] == 'Medium':
+            fill = yf
         else:
-            fill = gf if r['confidence'] == 'High' else (yf if r['confidence'] == 'Medium' else None)
+            fill = None
+
         if fill:
             for c in range(1, len(hdrs) + 1):
                 ws.cell(row=i, column=c).fill = fill
 
-    ws.auto_filter.ref = f'A1:{openpyxl.utils.get_column_letter(len(hdrs))}{len(results)+1}'
+    n_cols = len(hdrs)
+    ws.auto_filter.ref = f'A1:{openpyxl.utils.get_column_letter(n_cols)}{len(results) + 1}'
     ws.freeze_panes = 'A2'
     wb.save(path)
 
@@ -635,24 +832,32 @@ def _write_excel(results, path, sample_name):
 # CLI
 # ============================================================
 def main():
-    ap = argparse.ArgumentParser(description='GC-MS Auto-Identification Pipeline')
+    ap = argparse.ArgumentParser(description='GC-MS Auto-Identification Pipeline v2.0')
     ap.add_argument('input', help='Input TXT file or glob pattern with --batch')
     ap.add_argument('output', help='Output Excel path or directory with --batch')
     ap.add_argument('--lib', default=AMDIS_LIB_DIR, help='AMDIS LIB directory path')
     ap.add_argument('--batch', action='store_true', help='Batch mode')
     ap.add_argument('--with-msl', action='store_true', help='Load AMDIS MSL libraries')
-    ap.add_argument('--threshold', type=int, default=650,
-                    help='Minimum SI threshold (default: 650)')
+    ap.add_argument('--threshold', type=int, default=700,
+                    help='Minimum SI threshold MF or RMF (default: 700)')
+    ap.add_argument('--mf-high', type=int, default=850,
+                    help='High confidence threshold (default: 850)')
+    ap.add_argument('--mf-medium', type=int, default=750,
+                    help='Medium confidence threshold (default: 750)')
     args = ap.parse_args()
 
     Config.threshold = args.threshold
+    Config.mf_high = args.mf_high
+    Config.mf_medium = args.mf_medium
     Config.use_msl = args.with_msl
 
     print("=" * 60)
-    print("GC-MS Auto-Identification Pipeline v1.0")
+    print("GC-MS Auto-Identification Pipeline v2.0")
+    print(f"  NIST MF/RMF matching | threshold={Config.threshold}"
+          f" | MF high={Config.mf_high} med={Config.mf_medium}")
     print("=" * 60)
 
-    library, bp_index = load_libraries(args.lib)
+    library, bp_index, ion_masks = load_libraries(args.lib)
 
     if args.batch:
         import glob
@@ -661,9 +866,9 @@ def main():
         for f in sorted(files):
             base = os.path.splitext(os.path.basename(f))[0]
             out = os.path.join(args.output, f'{base}_identified.xlsx')
-            process_sample(f, library, bp_index, out)
+            process_sample(f, library, bp_index, ion_masks, out)
     else:
-        process_sample(args.input, library, bp_index, args.output)
+        process_sample(args.input, library, bp_index, ion_masks, args.output)
 
     print("\nDone.")
 

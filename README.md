@@ -6,10 +6,11 @@ Originally built for food and marine volatile organic compound (VOC) analysis �
 
 - **Raw Data Parsing** — Reads Thermo Xcalibur GC-MS text exports (scan-level m/z + intensity)
 - **Peak Detection & Integration** — Savitzky-Golay smoothing, baseline correction, Simpson integration
-- **Spectral Library Matching** — NIST-style sqrt-weighted cosine similarity with forward/reverse search
-- **Background Filtering** — Air/water, column bleed, phthalate, and contaminant removal
-- **RT Sanity Check** — Retention time validation for physically impossible matches
-- **Excel Reporting** — Formatted reports with compound name, CAS, SI score, peak area, confidence level
+- **NIST-compatible MF/RMF Matching** — Mass-weighted cosine dot-product (w = mz × sqrt(I/I_max)), forward match factor (MF) and reverse match factor (RMF) with co-elution detection (RMF - MF > 150 → flag)
+- **2-Stage Funnel Pre-search** — Base-peak gate → top-12 ion inverted index → top-500 candidate retrieval with 2-pass fallback (Thermo-style indexed search)
+- **3-Tier Peak Classification** — L1 natural products / L2 suspected contaminants / L3 confirmed background (air, column bleed)
+- **RT Sanity Check** — Retention time validation for common food volatiles (~80 compounds, DB-5 MS)
+- **Excel Reporting** — Formatted reports with compound name, CAS, MF, RMF, SI, confidence level, co-elution flag, peak area
 - **Batch Processing** — Process multiple files in one command
 
 ## Installation
@@ -27,8 +28,8 @@ python gcms_pipeline.py sample.txt output.xlsx
 # Batch processing
 python gcms_pipeline.py --batch "data/*.txt" ./results/
 
-# With custom SI threshold (default: 850)
-python gcms_pipeline.py sample.txt output.xlsx --threshold 800
+# With custom SI threshold (default: 700)
+python gcms_pipeline.py sample.txt output.xlsx --threshold 750
 ```
 
 ## Input Format
@@ -90,8 +91,13 @@ Excel report with columns:
 - **RT (min)** — Retention time
 - **Compound** — Best library match
 - **CAS No.** — CAS registry number
-- **SI** — Spectral match factor (0-999, NIST-style)
-- **Confidence** — High (SI≥880) / Medium (SI≥850) / Low (SI<850)
+- **MF** — Forward Match Factor (0-999, all shared peaks)
+- **RMF** — Reverse Match Factor (0-999, library peaks only; higher = tolerant to co-elution)
+- **SI** — Primary score: max(MF, RMF)
+- **N Shared** — Number of shared ions between unknown and library
+- **Confidence** — High (SI≥850) / Medium (SI≥750) / Low (SI<750)
+- **Co-elution** — Flagged when RMF - MF > 150 (suspected co-eluting impurity)
+- **Tier** — L1 (natural) / L2 (suspect contaminant) / L3 (background)
 - **Peak Area** — Integrated peak area
 - **Peak Height** — TIC at peak apex
 

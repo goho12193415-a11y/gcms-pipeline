@@ -1,6 +1,6 @@
 # GC-MS Auto-Identification Pipeline
 
-Originally built for food and marine volatile organic compound (VOC) analysis — now expanded to 406 NIST-verified EI-MS spectra across 14 application domains: Maillard/thermal, meat, tea/coffee, spices, fruits, fermented beverages, dairy, lipid oxidation, nuts, smoke, vegetables, carotenoid degradation, and environmental contaminants.
+Originally built for food and marine volatile organic compound (VOC) analysis — now expanded to 500 NIST-verified EI-MS spectra across 14 application domains: Maillard/thermal, meat, tea/coffee, spices, fruits, fermented beverages, dairy, lipid oxidation, nuts, smoke, vegetables, carotenoid degradation, and environmental contaminants.
 
 ## Features
 

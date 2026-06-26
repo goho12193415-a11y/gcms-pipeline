@@ -176,11 +176,17 @@ def load_libraries(lib_dir=None):
     """Load spectral libraries: bundled MSP + optional AMDIS MSL."""
     all_compounds = []
 
-    # Primary: bundled food_volatiles.msp
+    # Primary: NIST main library (if available), fallback to food_volatiles.msp
     here = os.path.dirname(os.path.realpath(__file__))
-    msp_path = os.path.join(here, 'food_volatiles.msp')
-    if os.path.exists(msp_path):
-        comps = parse_msp(msp_path)
+    nist_path = os.path.join(here, 'nist_mainlib.msp')
+    fallback_path = os.path.join(here, 'food_volatiles.msp')
+
+    if os.path.exists(nist_path):
+        comps = parse_msp(nist_path)
+        all_compounds.extend(comps)
+        print(f"[LIB] nist_mainlib.msp: {len(comps)} compounds (NIST 2014)")
+    elif os.path.exists(fallback_path):
+        comps = parse_msp(fallback_path)
         all_compounds.extend(comps)
         print(f"[LIB] food_volatiles.msp: {len(comps)} compounds")
 
@@ -220,14 +226,15 @@ def spectral_similarity(observed, reference):
     else:
         min_shared = 7
 
-    # Reject if reference base peak is NOT found in observed spectrum
-    bp_found = any(abs(omz - ref_bp) <= 1 for omz in obs)
+    # Reject if reference base peak is NOT one of the top 3 observed ions
+    obs_bp = max(obs, key=obs.get)
+    obs_top3 = sorted(obs.keys(), key=lambda x: -obs[x])[:3]
+    bp_found = any(abs(ref_bp - o) <= 1 for o in obs_top3)
     if not bp_found:
         return 0
 
-    # Strict: if reference has very few peaks (<10), require exact base peak match
-    if few_peaks and not any(abs(omz - ref_bp) <= 0 for omz in obs):
-        return 0
+    # Bonus: reference base peak matches observed base peak
+    bp_exact = 1.0 if abs(ref_bp - obs_bp) <= 1 else 0.5
 
     # Normalize to base peak = 999
     obs_bp = max(obs.values())
@@ -246,13 +253,13 @@ def spectral_similarity(observed, reference):
     if len(shared) < min_shared:
         return 0
 
-    # Forward sqrt-weighted dot product
+    # Forward dot product (raw intensity, more discriminative than sqrt)
     num = 0.0
     den_o = 0.0
     den_r = 0.0
     for mz in shared:
-        oi = np.sqrt(obs_n.get(mz, 1))
-        ri = np.sqrt(ref_n[mz])
+        oi = obs_n.get(mz, 1)
+        ri = ref_n[mz]
         num += oi * ri
         den_o += oi * oi
         den_r += ri * ri
@@ -268,17 +275,14 @@ def spectral_similarity(observed, reference):
                           for omz in obs_n for d in (-1, 0, 1)))
     rev_cov = rev_hits / max(len(ref_n), 1)
 
-    # Base peak check
-    obs_bp_mz = max(obs_n, key=obs_n.get)
-    ref_bp_mz = max(ref_n, key=ref_n.get)
-    bp_ok = 1.0 if abs(obs_bp_mz - ref_bp_mz) <= 1 else 0.3
+    # Base peak check (bp_exact is already computed above)
 
     # Reverse coverage must be reasonable - reference must explain the unknown
     obs_coverage = len(shared) / max(len(obs_n), 1)
-    if rev_cov < 0.5 or obs_coverage < 0.3:
+    if rev_cov < 0.6 or obs_coverage < 0.4:
         return 0  # Reference doesn't explain the observed spectrum well enough
 
-    return int((fwd * 0.40 + rev_cov * 0.30 + bp_ok * 0.15 + obs_coverage * 0.15) * 999)
+    return min(999, int((fwd * 0.45 + rev_cov * 0.30 + bp_exact * 0.15 + obs_coverage * 0.10) * 999))
 
 
 # ============================================================
@@ -462,11 +466,24 @@ def process_sample(filepath, library, output_path):
             if len(clean2) >= 6:
                 clean = clean2
 
-        # Match against library
+        # Match against library (with presearch + tier-based threshold)
+        # Presearch: filter by top 10 most abundant ions first
+        effective_threshold = 700 if tier == 'L1' else (Config.threshold if Config.threshold > 850 else 850)
+
+        # Build ion signature for quick prescreening
+        obs_top15 = set(int(round(m)) for m, i in sorted(clean, key=lambda x: -x[1])[:15])
+
         matches = []
         for comp in library:
-            si = spectral_similarity(clean, comp['peaks'])
-            if si >= Config.threshold:
+            # Quick prescreen: at least 4 of the top 6 reference ions must be in observed top 15
+            ref_peaks = comp['peaks']
+            ref_top6 = [m for m, i in sorted(ref_peaks, key=lambda x: -x[1])[:6]]
+            prescreen_hits = sum(1 for m in ref_top6 if any(abs(m - o) <= 1 for o in obs_top15))
+            if prescreen_hits < 4:
+                continue
+
+            si = spectral_similarity(clean, ref_peaks)
+            if si >= effective_threshold:
                 matches.append((si, comp))
 
         if not matches:

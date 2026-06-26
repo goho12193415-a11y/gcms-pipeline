@@ -5,3 +5,4 @@ output*/
 *.raw
 *.dat
 example/raw_data/
+nist_mainlib.msp

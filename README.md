@@ -51,22 +51,24 @@ To export from Xcalibur: `File → Export → Text (.txt)` with "All scans" sele
 
 A curated MSP-format spectral library of **300 compounds** organized by application domain. All spectra verified against NIST reference data for base peak accuracy.
 
-### Quick Lookup by Analysis Type
+### Quick Lookup by Application Domain (500 compounds)
 
 | Application | Count | Key Markers |
 |-------------|:-----:|-------------|
-| **Marine & Algae** | 41 | DMS, halogenated phenols, iodoalkanes, 1-penten-3-ol, geosmin, (E,Z)-2,6-nonadienal |
-| **Maillard & Thermal** | 65 | Pyrazines, furans, thiazoles, Strecker aldehydes, pyrroles, furanones |
-| **Fruity & Floral** | 51 | Monoterpenes, ionones, damascenones, lactones, benzaldehyde, esters |
-| **Lipid Oxidation** | 32 | Alkanals, 2-alkenals, 2,4-dienals, 1-octen-3-ol/one, alkylfurans |
-| **Sesquiterpenes** | 30 | Caryophyllene, cadinenes, muuroles, elemenes, oxygenated sesquiterpenes |
-| **Fermented & Spoilage** | 21 | Short-chain acids, ethyl esters, acetoin, 2,3-butanediol |
+| **Maillard & Thermal** | 101 | Pyrazines, furans, thiazoles, Strecker aldehydes |
+| **Fruity & Floral** | 86 | Monoterpenes, ionones, damascenones, lactones, esters |
+| **Marine & Algae** | 54 | DMS, halogenated phenols, iodoalkanes, 1-penten-3-ol, geosmin |
+| **Fermented & Beverages** | 50 | Higher alcohols, ethyl esters, acids, acetoin |
+| **Lipid Oxidation** | 41 | Alkanals, 2-alkenals, 2,4-dienals, alkylfurans |
+| **Sesquiterpenes** | 30 | Caryophyllene, cadinenes, muuroles, oxygenated sesquiterpenes |
+| **Phenolic & Smoky** | 19 | Guaiacol, eugenol, syringol, cresols, vinylguaiacol |
+| **Fresh & Green** | 17 | C6 aldehydes/alcohols, hexenals, hexenols |
 | **Environmental** | 17 | Phthalates, BHT, BTEX, naphthalenes |
 | **Carotenoid Degradation** | 16 | Ionones, damascenones, safranal, megastigmatrienone |
-| **Fresh & Green** | 15 | C6 aldehydes/alcohols, hexenals, hexenols |
-| **Phenolic & Smoky** | 11 | Guaiacol, eugenol, vanillin, vinylguaiacol, cresols |
+| **Spices & Herbs** | 14 | Cuminaldehyde, eugenol, thymol, carvacrol, menthol |
+| **Tea & Coffee** | 10 | Jasmine lactone, nerolidol, linalool oxide, coumarin |
 
-See [category_index.json](category_index.json) for the complete categorized compound list.
+See [category_index.json](category_index.json) for the complete categorized compound list with cross-references.
 
 ### Expanding the Library
 

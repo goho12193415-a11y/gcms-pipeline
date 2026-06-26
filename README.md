@@ -1,6 +1,6 @@
 # GC-MS Auto-Identification Pipeline
 
-Automated peak detection, spectral matching, and compound identification for GC-MS data. Built for food and marine volatile organic compound (VOC) analysis.
+Originally built for food and marine volatile organic compound (VOC) analysis — now expanded to 406 NIST-verified EI-MS spectra across 14 application domains: Maillard/thermal, meat, tea/coffee, spices, fruits, fermented beverages, dairy, lipid oxidation, nuts, smoke, vegetables, carotenoid degradation, and environmental contaminants.
 
 ## Features
 

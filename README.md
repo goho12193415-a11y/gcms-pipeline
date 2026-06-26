@@ -49,24 +49,25 @@ To export from Xcalibur: `File → Export → Text (.txt)` with "All scans" sele
 
 ## Spectral Library
 
-A curated MSP-format spectral library of **250 compounds** with NIST-verified reference EI-MS spectra covering marine algae, food volatiles, and environmental VOCs:
+A curated MSP-format spectral library of **300 compounds** with NIST-verified reference EI-MS spectra covering marine algae, food volatiles, Maillard reaction products, and environmental VOCs:
 
 | Class | Count | Examples |
 |-------|:-----:|----------|
-| Aldehydes | 30 | Hexanal, (E)-2-Hexenal, Nonanal, (E,Z)-2,6-Nonadienal |
-| Ketones | 25 | 2-Heptanone, beta-Ionone, Damascenone, 6-Methyl-5-hepten-2-one |
-| Alcohols | 20 | 1-Octen-3-ol, 1-Penten-3-ol, Geosmin |
-| Terpenes | 55 | Limonene, beta-Caryophyllene, Germacrene D, Phytol |
-| Sulfur Compounds | 10 | Dimethyl sulfide, Dimethyl disulfide, 2-Acetylthiazole, Benzothiazole |
-| Halogenated | 16 | Iodoform, 1-Iodoheptane, 2,6-Dibromophenol, Bromoform |
-| Pyrazines | 14 | 2,5-Dimethylpyrazine, 2-Isobutyl-3-methoxypyrazine |
-| Furans | 12 | 2-Pentylfuran, Furfural, 4-Hydroxy-2,5-dimethyl-3(2H)-furanone |
-| Phenols | 16 | Guaiacol, Eugenol, 4-Vinylguaiacol, 2,4,6-Tribromophenol |
-| Acids | 12 | Acetic acid, Hexanoic acid, Nonanoic acid |
-| Esters/Lactones | 16 | gamma-Butyrolactone, Benzyl acetate, Methyl salicylate |
-| Aromatics | 10 | Styrene, Naphthalene, Toluene, p-Cymene |
-| N-Compounds | 8 | Indole, 2-Acetylpyrrole, 2-Acetyl-1-pyrroline |
-| Others | 9 | BHT, 2-MIB, Neophytadiene, Squalene |
+| Aldehydes | 32 | Hexanal, (E)-2-Hexenal, Nonanal, (E,Z)-2,6-Nonadienal, Methional |
+| Ketones | 28 | 2-Heptanone, beta-Ionone, Damascenone, Megastigmatrienone |
+| Alcohols | 22 | 1-Octen-3-ol, 1-Penten-3-ol, Geosmin, 2-Methylisoborneol |
+| Terpenes | 55 | Limonene, beta-Caryophyllene, Germacrene D, Phytol, Neophytadiene |
+| Pyrazines | 20 | 2,5-Dimethylpyrazine, 2-Isobutyl-3-methoxypyrazine, 3-Ethyl-2,5-dimethylpyrazine |
+| Sulfur Compounds | 14 | Dimethyl sulfide, Benzothiazole, 2-Methyl-3-furanthiol, 2-Acetylthiazole |
+| Thiazoles/Oxazoles | 10 | 2-Isobutylthiazole, Trimethylthiazole, 2,3,5-Trimethyloxazole |
+| Halogenated | 20 | Iodoform, 1-Iodoheptane, 2,6-Dibromophenol, Bromoform, Trichlorophenol |
+| Furans/Furanones | 18 | 2-Pentylfuran, Furfural, Furaneol, Maltol, Cyclotene |
+| Pyrroles | 8 | 2-Acetylpyrrole, 2-Acetyl-1-pyrroline, 2-Formylpyrrole |
+| Phenols | 18 | Guaiacol, Eugenol, 4-Vinylguaiacol, 2,4,6-Tribromophenol |
+| Acids | 14 | Acetic acid, Hexanoic acid, Nonanoic acid, Isovaleric acid |
+| Esters/Lactones | 20 | gamma-Butyrolactone, Benzyl acetate, Methyl salicylate |
+| Aromatics | 12 | Styrene, Naphthalene, Toluene, p-Cymene |
+| Others | 14 | BHT, Squalene, alpha-Isomethylionone, Megastigmatrienone |
 
 ### Expanding the Library
 

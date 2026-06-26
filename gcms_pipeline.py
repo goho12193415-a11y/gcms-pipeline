@@ -225,80 +225,77 @@ def load_libraries(lib_dir=None):
 # SPECTRAL MATCHING
 # ============================================================
 def spectral_similarity(observed, reference):
-    """NIST-style match factor (0-999) with sqrt-weighted cosine similarity."""
-    # Build dictionaries
-    obs = {int(round(m)): int(i) for m, i in observed}
-    ref = {int(round(m)): int(i) for m, i in reference}
+    """NIST mass-weighted cosine with contaminant ion pre-filtering.
 
-    if not obs or not ref:
+    - Filters known contaminant m/z before matching (siloxanes, phthalates)
+    - Weights ions by sqrt(intensity) × m/z^1.3 (NIST convention)
+    - Forward + reverse search with base peak gating
+    """
+    # Filter contaminant ions from observed spectrum before matching
+    CONTAMINANT_MZ = {73, 147, 207, 221, 267, 281, 295, 327, 341, 355, 429,
+                      149, 167, 279, 57, 71, 85, 99, 113}  # Siloxane + alkane + phthalate
+    obs = {}
+    for m, i in observed:
+        mz = int(round(m))
+        if mz not in CONTAMINANT_MZ and mz > 25:
+            obs[mz] = max(obs.get(mz, 0), int(i))
+
+    ref = {}
+    for m, i in reference:
+        mz = int(round(m))
+        ref[mz] = max(ref.get(mz, 0), int(i))
+
+    if len(obs) < 5 or len(ref) < 5:
         return 0
 
-    # Require more shared ions for compounds with few reference peaks or generic base peaks
-    ref_bp = max(ref, key=ref.get)
-    generic_bp = {43, 41, 57, 44, 55, 56, 69, 71, 60, 88, 45, 70, 82}
-    few_peaks = len(ref) < 10
-    if ref_bp in generic_bp or few_peaks:
-        min_shared = 9
-    else:
-        min_shared = 7
-
-    # Reject if reference base peak is NOT one of the top 3 observed ions
-    obs_bp = max(obs, key=obs.get)
+    ref_bp_mz = max(ref, key=ref.get)
+    obs_bp_mz = max(obs, key=obs.get)
     obs_top3 = sorted(obs.keys(), key=lambda x: -obs[x])[:3]
-    bp_found = any(abs(ref_bp - o) <= 1 for o in obs_top3)
-    if not bp_found:
+
+    # Gate: ref base peak must be in observed top 3 (±2 Da, relaxed for co-elution)
+    if not any(abs(ref_bp_mz - o) <= 2 for o in obs_top3):
         return 0
 
-    # Bonus: reference base peak matches observed base peak
-    bp_exact = 1.0 if abs(ref_bp - obs_bp) <= 1 else 0.5
+    # Normalize to 0-1 range
+    obp = max(obs.values()); onorm = {m: v/obp for m, v in obs.items()}
+    rbp_val = max(ref.values()); rnorm = {m: v/rbp_val for m, v in ref.items()}
 
-    # Normalize to base peak = 999
-    obs_bp = max(obs.values())
-    obs_n = {m: int(v / obs_bp * 999) for m, v in obs.items()}
-    ref_bp = max(ref.values())
-    ref_n = {m: int(v / ref_bp * 999) for m, v in ref.items()}
+    # NIST weight: W = sqrt(I) × mz^1.3
+    def nist_weight(mz, intensity):
+        return np.sqrt(max(intensity, 0.001)) * (mz ** 1.3)
 
-    # Find shared ions (within 1 Da tolerance)
-    shared = []
-    for rmz in ref_n:
-        for dmz in (-1, 0, 1):
-            if (rmz + dmz) in obs_n:
-                shared.append(rmz)
+    # Shared ions (within 1 Da tolerance)
+    rkeys = set(rnorm.keys())
+    shared = set()
+    for m in onorm:
+        for d in (-1, 0, 1):
+            if m+d in rkeys:
+                shared.add(m)
                 break
 
-    if len(shared) < min_shared:
+    if len(shared) < 6:
         return 0
 
-    # Forward dot product (raw intensity, more discriminative than sqrt)
-    num = 0.0
-    den_o = 0.0
-    den_r = 0.0
+    # Mass-weighted cosine
+    fnum = 0.0; fden_o = 0.0; fden_r = 0.0
     for mz in shared:
-        oi = obs_n.get(mz, 1)
-        ri = ref_n[mz]
-        num += oi * ri
-        den_o += oi * oi
-        den_r += ri * ri
+        oi = onorm.get(mz, 0.001); ri = rnorm.get(mz, 0.001)
+        wo = nist_weight(mz, oi); wr = nist_weight(mz, ri)
+        fnum += wo * wr; fden_o += wo*wo; fden_r += wr*wr
 
-    if den_o == 0 or den_r == 0:
-        return 0
+    if fden_o == 0 or fden_r == 0: return 0
+    score = fnum / (np.sqrt(fden_o) * np.sqrt(fden_r))
 
-    fwd = num / (np.sqrt(den_o) * np.sqrt(den_r))
+    # Reverse coverage: what fraction of REF ions found in OBS?
+    rev_hits = sum(1 for rmz in rnorm if any(abs(rmz+d-omz)<=1 for omz in onorm for d in (-1,0,1)))
+    rev_cov = rev_hits / max(len(rnorm), 1)
+    if rev_cov < 0.4: return 0
 
-    # Reverse coverage
-    rev_hits = sum(1 for rmz in ref_n
-                   if any(abs(rmz + d - omz) <= 1
-                          for omz in obs_n for d in (-1, 0, 1)))
-    rev_cov = rev_hits / max(len(ref_n), 1)
+    # BP bonus
+    bp_bonus = 1.0 if abs(ref_bp_mz - obs_bp_mz) <= 1 else (0.5 if abs(ref_bp_mz - obs_bp_mz) <= 3 else 0)
+    if bp_bonus == 0: return 0
 
-    # Base peak check (bp_exact is already computed above)
-
-    # Reverse coverage must be reasonable - reference must explain the unknown
-    obs_coverage = len(shared) / max(len(obs_n), 1)
-    if rev_cov < 0.6 or obs_coverage < 0.4:
-        return 0  # Reference doesn't explain the observed spectrum well enough
-
-    return min(999, int((fwd * 0.45 + rev_cov * 0.30 + bp_exact * 0.15 + obs_coverage * 0.10) * 999))
+    return min(999, int((score*0.50 + rev_cov*0.30 + bp_bonus*0.20) * 999))
 
 
 # ============================================================

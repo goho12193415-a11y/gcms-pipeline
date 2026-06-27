@@ -41,9 +41,15 @@ class Config:
     min_shared_ions = 6    # minimum shared peaks for valid match
     pre_max_candidates = 500  # max candidates for full spectral matching
     pre_min_shared = 5     # minimum weighted shared ions to pass pre-search
+    # RI filtering
+    ri_tolerance = 50      # allowed RI deviation (±units) for polar columns
+    ri_tolerance_nonpolar = 30  # allowed RI deviation for non-polar columns
+    ri_weight = 0.15       # RI score contribution weight (SI * (1-ri_weight) + ri_score * ri_weight)
+    ri_column = 'DB-WAX'  # default column for RI lookup
+    ri_db_path = ''        # path to RI database JSON
 
-PEAK_DISTANCE = 10
-PROMINENCE_FACTOR = 0.3
+PEAK_DISTANCE = 3        # min distance between peaks (scans); ~1.5s @ 0.5s/scan
+PROMINENCE_FACTOR = 0.1   # prominence threshold relative to peak height
 
 # ---- Background / contaminant markers ----
 AIR_IONS = {28, 32, 40, 44, 18, 17}
@@ -110,6 +116,122 @@ RT_RANGES = {
     'Benzothiazole': (11, 19), 'Indole': (15, 24), 'Geosmin': (18, 26),
     '2-Methylisoborneol': (14, 22),
 }
+
+
+# ============================================================
+# RETENTION INDEX (RI) CALCULATION
+# ============================================================
+# Default n-alkane RTs for DB-WAX (approximate, 40-280 C ramp)
+# Calibrated from known compounds: 2-pentylfuran, benzaldehyde, beta-ionone
+# User should replace with actual alkane standard RTs via --alkanes option
+DEFAULT_ALKANE_RTS = {
+    'DB-WAX': [
+        (8.8, 1200), (15.4, 1400), (22.0, 1600), (28.6, 1800),
+        (35.2, 2000), (41.8, 2200), (48.4, 2400), (55.0, 2600),
+    ],
+    'DB-5': [
+        (7.0, 700), (8.5, 800), (10.0, 1000), (11.8, 1200),
+        (13.8, 1400), (16.0, 1600), (18.5, 1800), (21.0, 2000),
+        (23.5, 2200), (26.0, 2400), (28.5, 2600), (31.0, 2800),
+    ],
+}
+
+def calc_ri_from_rt(rt, alkane_rts=None, column='DB-WAX'):
+    """Convert retention time to Kovats Retention Index.
+
+    Uses linear interpolation between consecutive n-alkanes:
+        RI = 100 * [n + (RT_x - RT_n) / (RT_{n+1} - RT_n)]
+
+    Args:
+        rt: Retention time of unknown compound (min)
+        alkane_rts: List of (RT, RI) pairs for n-alkanes, sorted by RT.
+                    If None, uses DEFAULT_ALKANE_RTS for the column.
+        column: Column type ('DB-WAX' or 'DB-5')
+    Returns:
+        Estimated Kovats RI, or None if RT is outside alkane range.
+    """
+    if alkane_rts is None:
+        alkane_rts = DEFAULT_ALKANE_RTS.get(column, DEFAULT_ALKANE_RTS['DB-WAX'])
+
+    if not alkane_rts or rt < alkane_rts[0][0] or rt > alkane_rts[-1][0]:
+        # Extrapolate using first/last pair slope if possible
+        if len(alkane_rts) >= 2:
+            first, second = alkane_rts[0], alkane_rts[1]
+            slope = (second[1] - first[1]) / (second[0] - first[0])
+            if rt < first[0]:
+                return round(first[1] + slope * (rt - first[0]))
+            last, prev = alkane_rts[-1], alkane_rts[-2]
+            slope = (last[1] - prev[1]) / (last[0] - prev[0])
+            return round(last[1] + slope * (rt - last[0]))
+        return None
+
+    # Find bracketing alkane pair
+    for i in range(len(alkane_rts) - 1):
+        rt_n, ri_n = alkane_rts[i]
+        rt_n1, ri_n1 = alkane_rts[i + 1]
+        if rt_n <= rt <= rt_n1:
+            n = ri_n // 100
+            ri = 100 * n + 100 * (rt - rt_n) / (rt_n1 - rt_n)
+            return round(ri)
+
+    return None
+
+
+def load_ri_database(db_path=None):
+    """Load literature RI database from JSON file.
+
+    Returns dict: {compound_name_lower: {column: ri_value}}
+    """
+    if db_path is None:
+        here = os.path.dirname(os.path.realpath(__file__))
+        db_path = os.path.join(here, 'ri_database.json')
+
+    if not os.path.exists(db_path):
+        print(f"[RI] Database not found: {db_path}")
+        return {}
+
+    with open(db_path, 'r', encoding='utf-8') as f:
+        data = json.load(f)
+
+    ri_db = {}
+    for name, ri_values in data.get('compounds', {}).items():
+        ri_db[name.lower()] = ri_values
+
+    print(f"[RI] Loaded {len(ri_db)} compounds from {os.path.basename(db_path)}")
+    return ri_db
+
+
+def compute_ri_score(measured_ri, literature_ri, tolerance):
+    """Score RI match: 1.0 for perfect match, decreasing with deviation.
+
+    RI score = max(0, 1 - |RI_measured - RI_literature| / tolerance)
+    """
+    if measured_ri is None or literature_ri is None:
+        return 0.5  # neutral if either is unknown
+    delta = abs(measured_ri - literature_ri)
+    if delta <= 5:
+        return 1.0
+    score = max(0.0, 1.0 - delta / tolerance)
+    return score
+
+
+def get_literature_ri(compound_name, ri_db, column='DB-WAX', cas=''):
+    """Look up literature RI for a compound by CAS first, then by name."""
+    # CAS lookup (most reliable)
+    if cas and ri_db.get('by_cas'):
+        entry = ri_db['by_cas'].get(cas)
+        if entry and column in entry:
+            return entry[column]
+    # Name lookup (fallback)
+    entry = ri_db.get(compound_name.lower())
+    if entry and column in entry:
+        return entry[column]
+    # Try without column-specific key (AI estimate)
+    if entry:
+        ai_key = column + '_AI'
+        if ai_key in entry:
+            return entry[ai_key]
+    return None
 
 
 # ============================================================
@@ -395,26 +517,38 @@ def nist_similarity(observed, reference):
 # ============================================================
 # PRE-SEARCH: 2-stage funnel
 # ============================================================
-def pre_search_candidates(clean_spectrum, bp_index, ion_masks, library):
-    """2-stage funnel pre-search.
+# Background ions that should not be used as base peak for gating
+BACKGROUND_BP_IONS = AIR_IONS | BLEED_IONS | {149, 167, 279}
 
-    Stage 1: base-peak gate
-        Unknown's base peak must match library's base peak (±1 Da).
-        Eliminates ~99% of compounds.
+def pre_search_candidates(clean_spectrum, bp_index, ion_masks, library):
+    """2-stage funnel pre-search with background-aware base peak gating.
+
+    Stage 1: base-peak gate (background-aware)
+        If the observed base peak is an air/bleed/plasticizer ion,
+        use up to 3 alternative base peaks from the first non-background
+        ions. This prevents background-dominated spectra from failing
+        the gate when the true compound's base peak is a different ion.
 
     Stage 2: top-12 ion counter
         Count how many of unknown's top-12 ions (±1 Da) match each candidate's
-        top-12 ions. Top-12 provides enough specificity for discrimination.
-
-    Returns list of compound indices, sorted by shared ion count (desc),
-    capped at pre_max_candidates.
+        top-12 ions.
     """
     if len(clean_spectrum) < 3:
         return []
 
     # Sorted by intensity
     sorted_obs = sorted(clean_spectrum, key=lambda x: -x[1])
-    obs_bp = int(round(sorted_obs[0][0]))
+
+    # Collect up to 3 effective base peaks, skipping background ions
+    effective_bps = []
+    for mz, _ in sorted_obs[:15]:
+        mz_i = int(round(mz))
+        if mz_i not in BACKGROUND_BP_IONS:
+            effective_bps.append(mz_i)
+            if len(effective_bps) >= 3:
+                break
+    if not effective_bps:
+        effective_bps = [int(round(sorted_obs[0][0]))]
 
     # Observed top-12 ion set (±1 Da tolerance)
     obs_ion_set = set()
@@ -422,10 +556,11 @@ def pre_search_candidates(clean_spectrum, bp_index, ion_masks, library):
         mz_i = int(round(mz))
         obs_ion_set.update({mz_i - 1, mz_i, mz_i + 1})
 
-    # Stage 1: collect candidates from base peak index
+    # Stage 1: collect candidates from ALL effective base peaks
     candidates = set()
-    for d in (-1, 0, 1):
-        candidates.update(bp_index.get(obs_bp + d, []))
+    for bp in effective_bps:
+        for d in (-1, 0, 1):
+            candidates.update(bp_index.get(bp + d, []))
 
     if not candidates:
         return []
@@ -513,7 +648,7 @@ def detect_peaks(rts, tics, spectra):
     thresh = np.percentile(corr[corr > 0], 50)
     idxs, _ = find_peaks(corr, height=thresh, distance=PEAK_DISTANCE,
                           prominence=thresh * PROMINENCE_FACTOR)
-    min_tic = np.median(tics) * 1.2
+    min_tic = np.median(tics) * 0.75
     idxs = [i for i in idxs if tics[i] > min_tic]
 
     results = []
@@ -590,10 +725,22 @@ def classify_peak(mz_int_pairs):
 # ============================================================
 # MAIN PROCESSING
 # ============================================================
-def process_sample(filepath, library, bp_index, ion_masks, output_path):
-    """Run full pipeline on one GC-MS data file."""
+def process_sample(filepath, library, bp_index, ion_masks, output_path,
+                   ri_db=None, alkane_rts=None, ri_filter=False):
+    """Run full pipeline on one GC-MS data file.
+
+    Args:
+        ri_db: Literature RI database {name: {column: ri_value}}
+        alkane_rts: Alkane standard RTs [(rt, ri), ...]
+        ri_filter: If True, filter/re-rank by RI deviation
+    """
     name = os.path.basename(filepath)
+    ri_column = Config.ri_column
+    ri_tolerance = Config.ri_tolerance_nonpolar if ri_column == 'DB-5' else Config.ri_tolerance
+
     print(f"\n[Processing] {name}")
+    if ri_filter:
+        print(f"  RI filtering: {ri_column} ±{ri_tolerance}")
 
     # Parse
     rts, tics, spectra = parse_thermo_txt(filepath)
@@ -680,26 +827,64 @@ def process_sample(filepath, library, bp_index, ion_masks, output_path):
         if has_phthalate_149 and has_phthalate_57:
             continue
 
-        # Sort by SI descending, take best
+        # Sort by SI descending
         filtered.sort(key=lambda x: -x[2])
-        mf, rmf, si, n_shared, comp = filtered[0]
+
+        # ---- RI re-ranking (if enabled) ----
+        if ri_filter and ri_db:
+            # Calculate measured RI for this peak
+            ri_measured = calc_ri_from_rt(p['rt'], alkane_rts, ri_column)
+
+            # Re-rank top matches with combined SI + RI score
+            reranked = []
+            for mf_i, rmf_i, si_i, n_sh_i, comp_i in filtered:
+                ri_lit = get_literature_ri(comp_i['name'], ri_db, ri_column, cas=comp_i.get('cas', ''))
+                ri_score = compute_ri_score(ri_measured, ri_lit, ri_tolerance)
+                combined_si = int(round(si_i * (1 - Config.ri_weight) + ri_score * 999 * Config.ri_weight))
+
+                if ri_filter and ri_lit is not None:
+                    # Hard filter: reject if RI deviation > 2x tolerance
+                    if ri_measured is not None and abs(ri_measured - ri_lit) > 2 * ri_tolerance:
+                        continue
+
+                reranked.append((combined_si, mf_i, rmf_i, si_i, n_sh_i, comp_i, ri_measured, ri_lit, ri_score))
+
+            if reranked:
+                reranked.sort(key=lambda x: -x[0])
+                best = reranked[0]
+                combined_si, mf, rmf, si, n_shared, comp, ri_measured, ri_lit, ri_score = best
+            else:
+                # All RI-filtered out; fall back to top SI match without RI
+                mf, rmf, si, n_shared, comp = filtered[0]
+                ri_measured = calc_ri_from_rt(p['rt'], alkane_rts, ri_column)
+                ri_lit = get_literature_ri(comp['name'], ri_db, ri_column, cas=comp.get('cas', ''))
+                ri_score = compute_ri_score(ri_measured, ri_lit, ri_tolerance)
+                combined_si = si
+        else:
+            mf, rmf, si, n_shared, comp = filtered[0]
+            combined_si = si
+            ri_measured = None
+            ri_lit = None
+            ri_score = None
 
         # Exclude known contaminants
         if comp['name'] in CONTAMINANTS:
             continue
 
-        # RT sanity check
-        rt_range = RT_RANGES.get(comp['name'])
-        if rt_range and (p['rt'] < rt_range[0] or p['rt'] > rt_range[1]):
-            continue
+        # RT sanity check (skip if RI is available)
+        if not ri_filter:
+            rt_range = RT_RANGES.get(comp['name'])
+            if rt_range and (p['rt'] < rt_range[0] or p['rt'] > rt_range[1]):
+                continue
 
         # Co-elution flag
         coelution = (rmf - mf) > Config.coelution_delta
 
-        # Confidence level
-        if si >= Config.mf_high:
+        # Confidence level (use combined_si when RI is active)
+        eff_si = combined_si if ri_filter else si
+        if eff_si >= Config.mf_high:
             confidence = 'High'
-        elif si >= Config.mf_medium:
+        elif eff_si >= Config.mf_medium:
             confidence = 'Medium'
         else:
             confidence = 'Low'
@@ -715,6 +900,10 @@ def process_sample(filepath, library, bp_index, ion_masks, output_path):
             'rmf': rmf,
             'si': si,
             'n_shared': n_shared,
+            'ri_measured': ri_measured,
+            'ri_literature': ri_lit,
+            'ri_score': round(ri_score, 2) if ri_score is not None else None,
+            'combined_si': combined_si if ri_filter else None,
             'confidence': confidence,
             'coelution': coelution,
             'tier': tier,
@@ -773,10 +962,13 @@ def _write_excel(results, path, sample_name):
     l3_fill = PatternFill('solid', fgColor='FF9999')  # red: L3 background
     co_fill = PatternFill('solid', fgColor='D9B3FF')  # purple: co-elution
 
+    has_ri = any(r.get('ri_measured') is not None for r in results)
     hdrs = ['No.', 'RT (min)', 'Compound', 'CAS', 'MF', 'RMF', 'SI',
-            'N Shared', 'Confidence', 'Co-elution', 'Tier', 'Peak Type',
+            'N Shared', 'RI Meas.', 'RI Lit.', 'RI Score',
+            'Confidence', 'Co-elution', 'Tier', 'Peak Type',
             'Peak Area', 'Peak Height', 'Formula']
-    widths = [5, 9, 35, 15, 6, 6, 6, 8, 11, 10, 5, 16, 15, 15, 18]
+    widths = [5, 9, 35, 15, 6, 6, 6, 8, 9, 9, 8,
+              11, 10, 5, 16, 15, 15, 18]
 
     for c, (h, w) in enumerate(zip(hdrs, widths), 1):
         cell = ws.cell(row=1, column=c, value=h)
@@ -791,6 +983,9 @@ def _write_excel(results, path, sample_name):
             i - 1, r['rt'], r['compound'], r['cas'],
             r.get('mf', ''), r.get('rmf', ''), r['si'],
             r.get('n_shared', ''),
+            r.get('ri_measured', '') if r.get('ri_measured') is not None else '',
+            r.get('ri_literature', '') if r.get('ri_literature') is not None else '',
+            round(r['ri_score'], 2) if r.get('ri_score') is not None else '',
             r['confidence'], 'Y' if r.get('coelution') else '',
             r.get('tier', ''), r.get('peak_type', ''),
             r['area'], r['tic'], r.get('formula', '')
@@ -844,16 +1039,52 @@ def main():
                     help='High confidence threshold (default: 850)')
     ap.add_argument('--mf-medium', type=int, default=750,
                     help='Medium confidence threshold (default: 750)')
+    # RI options
+    ap.add_argument('--ri-column', default='DB-WAX', choices=['DB-5', 'DB-WAX'],
+                    help='Column type for RI lookup (default: DB-WAX)')
+    ap.add_argument('--ri-db', default='', help='Path to RI database JSON')
+    ap.add_argument('--ri-tolerance', type=int, default=50,
+                    help='RI deviation tolerance (default: 50)')
+    ap.add_argument('--with-ri', action='store_true',
+                    help='Enable RI-based filtering during matching')
+    ap.add_argument('--ri-no-filter', action='store_true',
+                    help='Annotate RI but do not filter by it')
+    ap.add_argument('--alkanes', default='',
+                    help='Alkane RTs: C8_RT,C10_RT,C12_RT,... (comma-separated)')
     args = ap.parse_args()
 
     Config.threshold = args.threshold
     Config.mf_high = args.mf_high
     Config.mf_medium = args.mf_medium
     Config.use_msl = args.with_msl
+    Config.ri_column = args.ri_column
+    Config.ri_tolerance_nonpolar = 30 if args.ri_column == 'DB-5' else args.ri_tolerance
+    Config.ri_tolerance = args.ri_tolerance
+    if args.ri_db:
+        Config.ri_db_path = args.ri_db
+
+    # Load RI database
+    ri_db = {}
+    alkane_rts = None
+    if args.with_ri:
+        ri_db = load_ri_database(Config.ri_db_path if Config.ri_db_path else None)
+        # Parse user-provided alkane RTs
+        if args.alkanes:
+            try:
+                vals = [float(x.strip()) for x in args.alkanes.split(',')]
+                carbons = list(range(len(vals) * 2 + 6, 5, -2))  # rough estimate
+                alkane_rts = [(vals[i], 100 * (8 + i)) for i in range(len(vals))]
+            except ValueError:
+                print("[RI] Invalid alkane RT format, using defaults")
+        if alkane_rts is None:
+            alkane_rts = DEFAULT_ALKANE_RTS.get(args.ri_column)
+        print(f"[RI] Column: {args.ri_column}, tolerance: ±{args.ri_tolerance}")
+        print(f"[RI] Alkane RTs: {len(alkane_rts) if alkane_rts else 0} points")
 
     print("=" * 60)
     print("GC-MS Auto-Identification Pipeline v2.0")
-    print(f"  NIST MF/RMF matching | threshold={Config.threshold}"
+    ri_status = f" + RI({args.ri_column})" if args.with_ri else ""
+    print(f"  NIST MF/RMF matching{ri_status} | threshold={Config.threshold}"
           f" | MF high={Config.mf_high} med={Config.mf_medium}")
     print("=" * 60)
 
@@ -866,9 +1097,13 @@ def main():
         for f in sorted(files):
             base = os.path.splitext(os.path.basename(f))[0]
             out = os.path.join(args.output, f'{base}_identified.xlsx')
-            process_sample(f, library, bp_index, ion_masks, out)
+            process_sample(f, library, bp_index, ion_masks, out,
+                          ri_db=ri_db, alkane_rts=alkane_rts,
+                          ri_filter=args.with_ri and not args.ri_no_filter)
     else:
-        process_sample(args.input, library, bp_index, ion_masks, args.output)
+        process_sample(args.input, library, bp_index, ion_masks, args.output,
+                      ri_db=ri_db, alkane_rts=alkane_rts,
+                      ri_filter=args.with_ri and not args.ri_no_filter)
 
     print("\nDone.")
 

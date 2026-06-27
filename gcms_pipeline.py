@@ -410,6 +410,16 @@ def load_libraries(lib_dir=None):
     total = len(all_compounds)
     print(f"[LIB] Total: {total} compounds, bp_index: {len(bp_index)} keys, "
           f"ion_masks: {len(ion_masks)} entries")
+
+    # Load curated food volatiles library for fallback (Pass 3)
+    food_path = os.path.join(here, 'food_volatiles.msp')
+    if os.path.exists(food_path) and os.path.exists(nist_path):
+        food_comps = parse_msp(food_path)
+        Config.food_library = food_comps
+        print(f"[LIB] Food library: {len(food_comps)} compounds (Pass 3 fallback)")
+    else:
+        Config.food_library = []
+
     return all_compounds, bp_index, ion_masks
 
 
@@ -544,7 +554,8 @@ def pre_search_candidates(clean_spectrum, bp_index, ion_masks, library):
     for mz, _ in sorted_obs[:15]:
         mz_i = int(round(mz))
         if mz_i not in BACKGROUND_BP_IONS:
-            effective_bps.append(mz_i)
+            if mz_i not in effective_bps:
+                effective_bps.append(mz_i)
             if len(effective_bps) >= 3:
                 break
     if not effective_bps:
@@ -805,6 +816,26 @@ def process_sample(filepath, library, bp_index, ion_masks, output_path,
                 si = max(mf, rmf)
                 if si >= tier_threshold:
                     matches.append((mf, rmf, si, n_shared, comp))
+
+        # Pass 3: brute-force scan of curated food library (no BP gate)
+        # For compounds whose library base peak is weak/absent in observed spectrum
+        if not matches and hasattr(Config, 'food_library') and Config.food_library:
+            obs_set = set()
+            sorted_clean = sorted(clean, key=lambda x: -x[1])
+            for mz, _ in sorted_clean[:12]:
+                mz_i = int(round(mz))
+                obs_set.update({mz_i - 1, mz_i, mz_i + 1})
+            for fi, comp in enumerate(Config.food_library):
+                fi_set = set()
+                fi_sorted = sorted(comp['peaks'], key=lambda x: -x[1])
+                for mz, _ in fi_sorted[:8]:
+                    mz_i = int(round(mz))
+                    fi_set.update({mz_i - 1, mz_i, mz_i + 1})
+                if len(obs_set & fi_set) >= 5:
+                    mf, rmf, n_shared, n_unk, n_lib = nist_similarity(clean, comp['peaks'])
+                    si = max(mf, rmf)
+                    if si >= tier_threshold:
+                        matches.append((mf, rmf, si, n_shared, comp))
 
         if not matches:
             continue

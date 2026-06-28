@@ -8,7 +8,6 @@ centroid data, spectrum enhancement.
 """
 import sys, json, argparse, time
 from pathlib import Path
-from datetime import datetime
 
 import numpy as np
 import pandas as pd
@@ -276,8 +275,9 @@ def run_gcms_pipeline(raw_files: list = None, mzml_files: list = None,
     # ---- Export ----
     if all_results:
         combined = pd.concat(all_results.values(), ignore_index=True)
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        xlsx = str(output_dir / f"GCMS_Results_{ts}.xlsx")
+        # Use fixed filename based on first sample name (overwrites previous runs)
+        first_sample = list(all_results.keys())[0] if all_results else "results"
+        xlsx = str(output_dir / f"{first_sample}.xlsx")
         export_to_excel(combined, xlsx)
     else:
         xlsx = None

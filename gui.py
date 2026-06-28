@@ -32,7 +32,7 @@ class GCMSApp:
         tf.pack_propagate(False)
         tk.Label(tf, text='GC-MS Auto-Processing System v2.1',
                 font=('Segoe UI', 16, 'bold'), fg='white', bg=ac).pack(pady=(10, 0))
-        tk.Label(tf, text='Copyright (c) 2026 Gou Hao',
+        tk.Label(tf, text='Copyright (c) 2026 go ho',
                 font=('Segoe UI', 8), fg='#b0c4de', bg=ac).pack()
 
         ff = tk.LabelFrame(root, text='Input Files', font=('Segoe UI', 10, 'bold'),
@@ -91,11 +91,11 @@ class GCMSApp:
         self.ot = tk.Text(root, height=8, font=('Consolas', 8),
                           bg='#1e1e1e', fg='#d4d4d4', state='disabled')
         self.ot.pack(fill='both', expand=True, padx=20, pady=(0, 5))
-        tk.Label(root, text='Copyright (c) 2026 Gou Hao',
+        tk.Label(root, text='Copyright (c) 2026 go ho',
                 font=('Segoe UI', 7), fg='#aaa', bg=bg).pack(pady=(0, 8))
         sys.stdout = TextRedirector(self.ot)
         self.log('GC-MS Auto-Processing System v2.1')
-        self.log('Copyright (c) 2026 Gou Hao')
+        self.log('Copyright (c) 2026 go ho')
         self.log('Ready.')
 
     def log(self, msg):

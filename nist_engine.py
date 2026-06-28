@@ -7,7 +7,8 @@ For each peak:
   3. Merge both lists — RI-matched compounds added even if MS rank is low
   4. Re-rank: compounds in BOTH lists get top priority
 """
-import json, numpy as np
+import json, re, numpy as np
+from pathlib import Path
 from pyms.Spectrum import MassSpectrum
 import pyms_nist_search
 
@@ -15,7 +16,17 @@ import pyms_nist_search
 class NISTSearchEngine:
     def __init__(self, lib_path=None, work_dir=None):
         if lib_path is None:
-            lib_path = r"C:\Users\go ho\Desktop\MSSEARCH\mainlib"
+            candidates = [
+                Path(r"C:\Users\go ho\Desktop\MSSEARCH\mainlib"),
+                Path(r"C:\Users\go ho\Desktop\GCMS_Software\谱库\mainlib"),
+            ]
+            lib_path = None
+            for c in candidates:
+                if c.exists():
+                    lib_path = str(c)
+                    break
+            if lib_path is None:
+                lib_path = r"C:\Users\go ho\Desktop\MSSEARCH\mainlib"
         if work_dir is None:
             import tempfile, os
             work_dir = os.path.join(tempfile.gettempdir(), "nist_work")
@@ -31,8 +42,13 @@ class NISTSearchEngine:
         self.ri_db5 = {}   # {name_lower: ri}
         self.ri_wax = {}   # {name_lower: ri}
 
+        import __main__
+        project_dir = Path(__main__.__file__).parent if hasattr(__main__, '__file__') else Path.cwd()
         paths = [
-            r"C:\Users\go ho\Desktop\gcms_pipeline_v2\library\ri_dual_column.json",
+            project_dir / "library" / "ri_dual_column.json",
+            project_dir / "library" / "ri_nist_full.json",
+            project_dir / "library" / "ri_enriched.json",
+            r"C:\Users\go ho\Desktop\gcms_pipeline_v2\library\ri_dual_column.json",  # fallback
             r"C:\Users\go ho\Desktop\gcms_pipeline_v2\library\ri_nist_full.json",
             r"C:\Users\go ho\Desktop\gcms_pipeline_v2\library\ri_enriched.json",
         ]
@@ -86,39 +102,36 @@ class NISTSearchEngine:
 
     def search_raw_spectrum(self, mz_array, int_array, top_n=5,
                               measured_ri=None):
-        """Search using raw high-precision m/z (no binning).
-
-        Args:
-            mz_array: numpy array of raw m/z values (0.1 Da precision)
-            int_array: numpy array of raw intensities
-        """
+        """NIST search + RI annotation + homolog injection (no re-ranking)."""
         if len(mz_array) == 0:
             return []
 
-        # Normalize to base peak = 999
         max_i = int_array.max()
         if max_i <= 0:
             return []
         int_norm = (int_array / max_i * 999).astype(int)
 
-        # Keep only top-200 most intense ions (NIST search limit)
-        if len(mz_array) > 200:
-            top_idx = np.argsort(int_norm)[-200:]
-            mz_list = mz_array[top_idx].tolist()
-            int_list = int_norm[top_idx].tolist()
+        # Sort by m/z (NIST DLL requires sorted m/z)
+        sort_idx = np.argsort(mz_array)
+        mz_sorted = mz_array[sort_idx]
+        int_sorted = int_norm[sort_idx]
+        if len(mz_sorted) > 200:
+            top_idx = np.argsort(int_sorted)[-200:]
+            mz_list = mz_sorted[top_idx].tolist()
+            int_list = int_sorted[top_idx].tolist()
         else:
-            mz_list = mz_array.tolist()
-            int_list = int_norm.tolist()
+            mz_list = mz_sorted.tolist()
+            int_list = int_sorted.tolist()
 
-        # NIST search
         try:
             ms = MassSpectrum(mz_list, int_list)
             hits = self.engine.full_search_with_ref_data(ms)
-        except Exception as e:
+        except:
             return []
 
+        # Top-5 from NIST (keep NIST's ranking)
         results = []
-        for i, hit in enumerate(hits[:top_n]):
+        for i, hit in enumerate(hits[:5]):
             if not isinstance(hit, tuple) or len(hit) < 2:
                 continue
             sr, ref = hit[0], hit[1]
@@ -138,10 +151,11 @@ class NISTSearchEngine:
                 'ri_wax': ri_wax, 'ri_db5': ri_db5,
                 'ri_diff': ri_delta,
                 'source': 'MS',
-                'combined_score': rmf,
+                'combined_score': float(rmf),
+                'rank': i + 1,
             })
 
-        return results[:top_n]
+        return results
 
     def search_spectrum(self, spectrum, mz_bins, top_n=5,
                          measured_ri=None):
@@ -192,7 +206,7 @@ class NISTSearchEngine:
         return ms_results[:top_n]
 
     def search_peaks_raw(self, peaks, scan_list, top_n=5, verbose=True):
-        """Batch search using raw high-precision spectra (no binning)."""
+        """Batch search + RI re-ranking (Goodner predictions included)."""
         all_matches = []
         for i, peak in enumerate(peaks):
             scan = scan_list[peak['apex_idx']]
@@ -202,6 +216,26 @@ class NISTSearchEngine:
             all_matches.append(matches)
             if verbose and (i + 1) % 50 == 0:
                 print(f"    [NIST-RAW] {i+1}/{len(peaks)} peaks searched")
+        return all_matches
+
+    def search_peaks_binned(self, peaks, intensity_matrix, mz_bins,
+                             top_n=5, verbose=True):
+        """Batch search using binned spectra (clean sorted m/z, best NIST match)."""
+        all_matches = []
+        for i, peak in enumerate(peaks):
+            spec = intensity_matrix[peak['apex_idx'], :]
+            mask = spec > 0
+            if not mask.any():
+                all_matches.append([])
+                continue
+            mz_arr = mz_bins[mask]
+            int_arr = spec[mask]
+            matches = self.search_raw_spectrum(
+                mz_arr, int_arr, top_n,
+                measured_ri=peak.get('ri_measured'))
+            all_matches.append(matches)
+            if verbose and (i + 1) % 50 == 0:
+                print(f"    [NIST-BINNED] {i+1}/{len(peaks)} peaks searched")
         return all_matches
 
     def search_peaks_batch(self, peaks, intensity_matrix, mz_bins,

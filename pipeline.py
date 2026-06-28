@@ -80,9 +80,9 @@ def process_single_sample(mzml_path: str, lib: SpectralLibrary,
     if not peaks:
         return {'sample_name': sample_name, 'dataframe': None, 'error': 'No peaks'}
 
-    # ---- Layer 4: Spectrum Enhancement ----
-    print("  [L4] Spectrum enhancement...")
-    peaks = enhance_all_peaks(intensity_matrix, peaks)
+    # ---- Layer 4: Spectrum Enhancement (SKIPPED — degrades NIST match quality) ----
+    print("  [L4] Spectrum enhancement: OFF (binned apex spectrum performs better)")
+    # peaks = enhance_all_peaks(intensity_matrix, peaks)  # DISABLED
 
     # ---- Layer 5: Deconvolution (OFF by default, use --deconv to enable) ----
     deconv_enabled = cfg.get('deconv_enabled', DECONV_ENABLED)
@@ -130,6 +130,7 @@ def process_single_sample(mzml_path: str, lib: SpectralLibrary,
         print("  [L6] NIST MS Search engine + RI re-ranking...")
         from nist_engine import NISTSearchEngine
         nist_engine = NISTSearchEngine()
+        # Use RAW spectrum (proven 29% coverage vs 24% binned)
         id_results = nist_engine.search_peaks_raw(
             peaks, data['scan_list'], top_n=5, verbose=True
         )

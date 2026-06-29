@@ -14,6 +14,57 @@ from pathlib import Path
 from datetime import datetime
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 
+import re
+
+try:
+    from config import TOP_N_CANDIDATES
+except ImportError:
+    TOP_N_CANDIDATES = 5
+
+
+# ---- RI QC: does the top-1 ID's literature RI sit on this column's transform? ----
+_WAX = None
+_WAX_NORM = None
+
+
+def _ri_canon(name):
+    n = name.lower().strip()
+    n = re.sub(r'^\(?\d*[ez](,\d*[ez])*\)?-', '', n)
+    n = re.sub(r'^(trans|cis)-', '', n)
+    n = re.sub(r',\s*\(?\d*[ez](,\d*[ez])*\)?-?$', '', n)
+    return re.sub(r'[^a-z0-9]', '', n)
+
+
+def _load_wax():
+    global _WAX, _WAX_NORM
+    if _WAX is not None:
+        return
+    import json
+    from config import PROJECT_DIR
+    try:
+        d = json.load(open(PROJECT_DIR / "library" / "ri_dual_column.json", encoding='utf-8'))
+        _WAX = {k.lower(): v for k, v in d.get('wax', {}).items()}
+    except Exception:
+        _WAX = {}
+    _WAX_NORM = {}
+    for k, v in _WAX.items():
+        _WAX_NORM.setdefault(_ri_canon(k), v)
+
+
+def _ri_check(meas_ri, top_name):
+    """Residual of the top-1 ID from the this-column<->literature DB-WAX
+    transform. 'OK' = RI corroborates the ID; 'suspect' = RI contradicts it;
+    'noRI' = no literature DB-WAX value to check against."""
+    from config import RI_QC_SLOPE, RI_QC_INTERCEPT, RI_QC_TOL, ALKANE_RTS_DB_WAX
+    if not meas_ri or not top_name:
+        return ''
+    _load_wax()
+    lit = _WAX.get(top_name.lower().strip()) or _WAX_NORM.get(_ri_canon(top_name))
+    if lit is None:
+        return 'noRI'
+    resid = lit - (RI_QC_SLOPE * meas_ri + RI_QC_INTERCEPT)
+    return 'OK' if abs(resid) <= RI_QC_TOL else 'suspect'
+
 
 # ---- Contaminant patterns ----
 CONTAMINANT_PATTERNS = [
@@ -139,6 +190,12 @@ def compile_results(sample_name, integrated_peaks, identification_results,
         status, status_reason = _auto_confirm_status(matches)
         top = matches[0] if matches else {}
 
+        # RI QC on the top-1 ID (this-column <-> literature transform residual)
+        from step7_library_search import calc_ri_from_rt
+        from config import ALKANE_RTS_DB_WAX
+        _mri = calc_ri_from_rt(peak.get('apex_rt', 0), ALKANE_RTS_DB_WAX)
+        ri_check = _ri_check(_mri, top.get('name', ''))
+
         # Peak info (shared across all candidates for this peak)
         base = {
             'Sample': sample_name,
@@ -152,6 +209,7 @@ def compile_results(sample_name, integrated_peaks, identification_results,
             'Percentage': round(quant.get('percentage', 0), 3) if quant.get('percentage') else '',
             'Status': status,
             'Status_Reason': status_reason,
+            'RI_Check': ri_check,   # OK / suspect / noRI (top-1 vs RI transform)
             'User_Confirm': '',  # Empty column for user to fill
         }
 
@@ -162,8 +220,8 @@ def compile_results(sample_name, integrated_peaks, identification_results,
                 food_in_top5 = True
                 break
 
-        # Top-3 candidates as sub-rows
-        for j, m in enumerate(matches[:3]):
+        # Top-N candidates as sub-rows
+        for j, m in enumerate(matches[:TOP_N_CANDIDATES]):
             row = dict(base)
             row['Rank'] = j + 1
             row['Compound_Name'] = m.get('name', 'Unknown')
@@ -173,6 +231,7 @@ def compile_results(sample_name, integrated_peaks, identification_results,
             row['RI_WAX'] = m.get('ri_wax', '') if m.get('ri_wax') is not None else ''
             row['RI_DB5'] = m.get('ri_db5', '') if m.get('ri_db5') is not None else ''
             row['RI_Diff'] = m.get('ri_diff', '') if m.get('ri_diff') is not None else ''
+            row['Source'] = m.get('source', '')
             row['Coelution'] = 'Y' if m.get('coelution_flag') else ''
             row['Food_In_Top5'] = 'Y' if food_in_top5 else ''
             rows.append(row)

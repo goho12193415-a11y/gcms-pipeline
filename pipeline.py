@@ -13,7 +13,7 @@ import numpy as np
 import pandas as pd
 
 from config import *
-from step1_parse import convert_raw_to_mzml, load_mzml_to_matrix
+from step1_parse import convert_raw_to_mzml, load_mzml_to_matrix, load_sample
 from step2_preprocess import (preprocess_signal, estimate_column_bleed,
                                subtract_column_bleed)
 from step3_peak_detect import detect_chromatographic_peaks
@@ -27,6 +27,61 @@ from step9_export import compile_results, export_to_excel
 from step10_qc import batch_qc_check
 
 
+def merge_replib_candidates(mzml_path: str, id_results: list,
+                            output_dir: Path) -> list:
+    """Run replib search in a separate process and merge its unique hits into
+    the reserved low ranks (6..top_n) of each peak. Reserve strategy keeps
+    mainlib's top (top_n - reserve) ranks intact, so it can only ADD (the
+    correct answer for replib-recovered peaks sits at rank 6-8), never displace
+    a confident mainlib hit. Only engages on peaks where mainlib is not already
+    confident (top-1 RMF < gate), to keep confident peaks clean."""
+    import subprocess
+    rep_json = output_dir / f"{Path(mzml_path).stem}_replib.json"
+    script = Path(__file__).parent / "replib_pass.py"
+    try:
+        subprocess.run([sys.executable, str(script), str(mzml_path), str(rep_json)],
+                       check=True, capture_output=True, text=True, timeout=600)
+        rep = json.load(open(rep_json, encoding='utf-8'))
+    except Exception as e:
+        print(f"  [replib] skipped ({type(e).__name__}); mainlib only")
+        return id_results
+
+    reserve = NIST_REPLIB_RESERVE
+    keep = max(1, TOP_N_CANDIDATES - reserve)
+    gate = NIST_REPLIB_FALLBACK_RMF
+    min_rmf = NIST_REPLIB_MIN_RMF
+    n_added = 0
+    merged_all = []
+    for i, mains in enumerate(id_results):
+        reps = rep[i]['candidates'] if i < len(rep) else []
+        main_top1 = mains[0].get('rmf', 0) if mains else 0
+        if not reps or main_top1 >= gate:           # mainlib confident -> keep as-is
+            merged_all.append(mains)
+            continue
+        have = {(m.get('name', '') or '').lower() for m in mains[:keep]}
+        extra = []
+        for r in reps:
+            nm = (r.get('name', '') or '').lower()
+            if nm and nm not in have and r.get('rmf', 0) >= min_rmf:
+                r = dict(r); r['source'] = 'replib'
+                extra.append(r); have.add(nm)
+            if len(extra) >= reserve:
+                break
+        merged = mains[:keep] + extra
+        for m in mains[keep:]:                       # backfill remaining mainlib
+            if len(merged) >= TOP_N_CANDIDATES:
+                break
+            nm = (m.get('name', '') or '').lower()
+            if nm not in have:
+                merged.append(m); have.add(nm)
+        for j, m in enumerate(merged):
+            m['rank'] = j + 1
+        n_added += len(extra)
+        merged_all.append(merged)
+    print(f"  [replib] merged +{n_added} replicate-library candidates")
+    return merged_all
+
+
 def process_single_sample(mzml_path: str, lib: SpectralLibrary,
                            config: dict = None,
                            output_dir: Path = None) -> dict:
@@ -37,10 +92,10 @@ def process_single_sample(mzml_path: str, lib: SpectralLibrary,
     print(f"  {sample_name}")
     print(f"{'='*55}")
 
-    # ---- Layer 1: Load mzML ----
+    # ---- Layer 1: Load sample (.RAW read natively, .mzML via pymzml) ----
     t0 = time.time()
-    print("  [L1] Loading mzML...")
-    data = load_mzml_to_matrix(mzml_path)
+    print("  [L1] Loading sample...")
+    data = load_sample(mzml_path)
     print(f"       {data['n_scans']:,} scans, "
           f"RT {data['rt'][0]:.1f}-{data['rt'][-1]:.1f} min")
 
@@ -132,8 +187,11 @@ def process_single_sample(mzml_path: str, lib: SpectralLibrary,
         nist_engine = NISTSearchEngine()
         # Use RAW spectrum (proven 29% coverage vs 24% binned)
         id_results = nist_engine.search_peaks_raw(
-            peaks, data['scan_list'], top_n=5, verbose=True
+            peaks, data['scan_list'], top_n=TOP_N_CANDIDATES, verbose=True
         )
+        # Merge replicate-library candidates (separate process; DLL is single-lib)
+        if cfg.get('use_replib', NIST_USE_REPLIB):
+            id_results = merge_replib_candidates(mzml_path, id_results, output_dir)
         n_confident = sum(1 for m in id_results if m and m[0].get('rmf', 0) >= 800)
     else:
         print("  [L6] Library search + RI boost...")
@@ -150,7 +208,8 @@ def process_single_sample(mzml_path: str, lib: SpectralLibrary,
                 query = peak['enhanced_full']
             else:
                 query = intensity_matrix[peak['apex_idx'], :]
-            peak['ri_measured'] = ri_meas
+            # ri_measured already computed above (calc_ri_from_rt); reuse it
+            ri_meas = peak['ri_measured']
 
             matches = search_library(
                 query, lib, mz_bins, top_n=10, max_candidates=500,
@@ -188,6 +247,26 @@ def process_single_sample(mzml_path: str, lib: SpectralLibrary,
         for p in integrated
     ]
 
+    # ---- Dump top-5 candidates for evaluation (eval/score.py) ----
+    cand_path = output_dir / f"{sample_name}_candidates.json"
+    cand_dump = []
+    for i, peak in enumerate(integrated):
+        matches = id_results[i] if i < len(id_results) else []
+        cand_dump.append({
+            'peak_no': i + 1,
+            'rt': round(peak.get('apex_rt', 0), 3),
+            'ri_measured': peak.get('ri_measured'),
+            'candidates': [
+                {'rank': m.get('rank', j + 1), 'name': m.get('name', ''),
+                 'cas': m.get('cas', ''), 'fmf': m.get('fmf', 0),
+                 'rmf': m.get('rmf', 0), 'ri_wax': m.get('ri_wax'),
+                 'ri_db5': m.get('ri_db5')}
+                for j, m in enumerate(matches[:TOP_N_CANDIDATES])
+            ]
+        })
+    with open(cand_path, 'w', encoding='utf-8') as f:
+        json.dump(cand_dump, f, ensure_ascii=False, indent=2)
+
     # ---- Compile ----
     result_df = compile_results(sample_name, integrated, id_results, quant_results)
     elapsed = time.time() - t0
@@ -219,21 +298,32 @@ def run_gcms_pipeline(raw_files: list = None, mzml_files: list = None,
     print("  SNIP baseline | ICIS peaks | Enhanced spectra | Triple ID")
     print("=" * 55)
 
-    # ---- Load library ----
-    print(f"\n[LIB] Loading: {Path(library_path).name}")
-    mz_bins_load = np.arange(MZ_MIN, MZ_MAX + MZ_STEP, MZ_STEP)
-    lib = SpectralLibrary()
-    lib.load_json(str(library_path), mz_bins_load)
+    # ---- Load library (only needed for the non-NIST path) ----
+    # In --nist mode identification uses the NIST DLL + mainlib, NOT this 127MB
+    # in-memory JSON, so skip loading it entirely (faster start, and the
+    # distribution doesn't need to ship nist_gcms.json).
+    if cfg.get('use_nist', False):
+        print(f"\n[LIB] NIST DLL mode — skipping in-memory SpectralLibrary load")
+        lib = None
+    else:
+        print(f"\n[LIB] Loading: {Path(library_path).name}")
+        mz_bins_load = np.arange(MZ_MIN, MZ_MAX + MZ_STEP, MZ_STEP)
+        lib = SpectralLibrary()
+        lib.load_json(str(library_path), mz_bins_load)
 
     # ---- Step 1: RAW conversion ----
     if mzml_files is None:
         mzml_files = []
     if raw_files:
-        print(f"\n[L0] Converting {len(raw_files)} RAW files...")
-        for raw_f in raw_files:
-            mzml_f = convert_raw_to_mzml(raw_f, str(output_dir / "mzml"))
-            mzml_files.append(mzml_f)
-            print(f"     {Path(raw_f).name} → {Path(mzml_f).name}")
+        if cfg.get('native_raw', NIST_NATIVE_RAW):
+            print(f"\n[L0] Reading {len(raw_files)} RAW files natively (no mzML conversion)")
+            mzml_files.extend(raw_files)        # processed directly by load_sample
+        else:
+            print(f"\n[L0] Converting {len(raw_files)} RAW files...")
+            for raw_f in raw_files:
+                mzml_f = convert_raw_to_mzml(raw_f, str(output_dir / "mzml"))
+                mzml_files.append(mzml_f)
+                print(f"     {Path(raw_f).name} → {Path(mzml_f).name}")
 
     # ---- Process each sample ----
     all_results = {}

@@ -12,9 +12,56 @@ from pathlib import Path
 from pyms.Spectrum import MassSpectrum
 import pyms_nist_search
 
+# Air / background ions that dominate low-abundance peak spectra and wreck the
+# NIST match (root cause of the Bm-class failures). Defined in config so it is
+# tunable in one place; frozenset here for fast membership tests.
+try:
+    from config import AIR_IONS as _AIR
+    AIR_IONS = frozenset(_AIR)
+except ImportError:
+    AIR_IONS = frozenset({17, 18, 28, 32, 40, 44})
+
+
+def _canon_alkane(name):
+    """Canonicalize IUPAC<->common branched-alkane naming to one key.
+    'Dodecane, 2,6,10-trimethyl-' / '2,6,10-Trimethyldodecane' -> 'dodecane-2,6,10-trimethyl'"""
+    n = name.lower().strip()
+    m = re.match(r'([a-z]+),?\s*([\d,]+-[a-z]+)', n)
+    if m:
+        return f'{m.group(1).strip().rstrip(",")}-{m.group(2).strip().rstrip("-")}'
+    m = re.match(r'([\d,]+-[a-z]+)([a-z]+)', n)
+    if m:
+        return f'{m.group(2)}-{m.group(1)}'
+    return n
+
+
+_ALK_BAD = ('ene', 'yne', 'ol', 'one', 'al,', 'oic', 'acid', 'ester', 'amine',
+            'oxy', 'sil', 'phen', 'furan', 'ketone', 'ate', 'bromo', 'chloro',
+            'fluoro', 'iodo', 'adamant', 'nitro', 'cyclo', 'thio', 'naphthalen')
+
+
+def _is_branched_alkane(name):
+    """True for methyl-substituted saturated alkanes (no other functional group)."""
+    n = name.lower()
+    if 'methyl' not in n or 'ane' not in n:
+        return False
+    return not any(b in n for b in _ALK_BAD)
+
+
+def _is_alkane_like(name):
+    """True for any saturated acyclic alkane (straight or methyl-branched).
+    Used to detect that a peak's spectrum reads as an alkane, which is the
+    cue that the exact (branched) homolog may be missing from the hits."""
+    n = name.lower().strip()
+    if not re.search(r'[a-z]ane\b', n):
+        return False
+    return not any(b in n for b in _ALK_BAD)
+
 
 class NISTSearchEngine:
-    def __init__(self, lib_path=None, work_dir=None):
+    def __init__(self, lib_path=None, work_dir=None, lib_type=None):
+        if lib_type is None:
+            lib_type = pyms_nist_search.NISTMS_MAIN_LIB
         if lib_path is None:
             candidates = [
                 Path(r"C:\Users\go ho\Desktop\MSSEARCH\mainlib"),
@@ -32,9 +79,13 @@ class NISTSearchEngine:
             work_dir = os.path.join(tempfile.gettempdir(), "nist_work")
             os.makedirs(work_dir, exist_ok=True)
 
-        self.engine = pyms_nist_search.Engine(
-            lib_path, pyms_nist_search.NISTMS_MAIN_LIB, work_dir,
-        )
+        # NOTE: pyms_nist_search wraps a stateful DLL with a single global
+        # "active library" — two Engine instances in one process corrupt each
+        # other (the second hijacks the DLL). So replib is NOT loaded here;
+        # it is searched in a separate process (replib_pass.py) and merged
+        # offline by the pipeline. This engine is mainlib-only.
+        self.engine = pyms_nist_search.Engine(lib_path, lib_type, work_dir)
+        self.lib_type = lib_type
         self._load_ri_database()
 
     def _load_ri_database(self):
@@ -42,15 +93,11 @@ class NISTSearchEngine:
         self.ri_db5 = {}   # {name_lower: ri}
         self.ri_wax = {}   # {name_lower: ri}
 
-        import __main__
-        project_dir = Path(__main__.__file__).parent if hasattr(__main__, '__file__') else Path.cwd()
+        from config import PROJECT_DIR as project_dir
         paths = [
             project_dir / "library" / "ri_dual_column.json",
             project_dir / "library" / "ri_nist_full.json",
             project_dir / "library" / "ri_enriched.json",
-            r"C:\Users\go ho\Desktop\gcms_pipeline_v2\library\ri_dual_column.json",  # fallback
-            r"C:\Users\go ho\Desktop\gcms_pipeline_v2\library\ri_nist_full.json",
-            r"C:\Users\go ho\Desktop\gcms_pipeline_v2\library\ri_enriched.json",
         ]
         for path in paths:
             try:
@@ -71,38 +118,76 @@ class NISTSearchEngine:
 
         print(f"  [RI] Dual-column: {len(self.ri_db5):,} DB-5 + "
               f"{len(self.ri_wax):,} DB-WAX")
+        self._build_alkane_ri_table()
 
-    def _search_by_ri(self, measured_ri, tolerance=50):
-        """Find all compounds in RI database within tolerance of measured RI.
+    def _build_alkane_ri_table(self):
+        """Predicted-RI table of branched alkanes (for RI-primary injection),
+        loaded from ri_nist_full.json name_to_ri (CNN/Goodner predictions)."""
+        self.alkane_ri = []        # sorted list of (ri, canon, display_name)
+        from config import PROJECT_DIR as project_dir
+        try:
+            with open(project_dir / "library" / "ri_nist_full.json",
+                      'r', encoding='utf-8') as f:
+                name_to_ri = json.load(f).get('name_to_ri', {})
+        except FileNotFoundError:
+            name_to_ri = {}
+        seen = {}
+        for nm, ri in name_to_ri.items():
+            if _is_branched_alkane(nm):
+                c = _canon_alkane(nm)
+                if c not in seen:        # keep first (predictions are per-name)
+                    seen[c] = (ri, c, nm)
+        self.alkane_ri = sorted(seen.values())
+        print(f"  [RI] Branched-alkane predicted-RI table: {len(self.alkane_ri)}")
 
-        Returns list of {name, ri, delta}
-        """
-        if measured_ri is None:
-            return []
-
-        results = []
-        for bucket in range((measured_ri - tolerance) // 10 * 10,
-                            measured_ri + tolerance + 10, 10):
-            for item in self.ri_lookup.get(bucket, []):
-                name, ri = item[0], item[1]
-                delta = abs(ri - measured_ri)
-                if delta <= tolerance:
-                    results.append({'name': name, 'ri': ri, 'delta': delta})
-
-        # Sort by delta, deduplicate by name
-        results.sort(key=lambda x: x['delta'])
-        seen = set()
-        unique = []
-        for r in results:
-            key = r['name'].lower()
-            if key not in seen:
-                seen.add(key)
-                unique.append(r)
-        return unique
+    def _inject_ri_alkanes(self, results, measured_ri,
+                           tol=25, max_inject=2):
+        """If the spectrum confidently reads 'branched alkane' but the exact
+        homolog is absent from the spectral hits, inject the predicted-RI
+        candidate(s) closest to the measured RI. Inserted after spectral #1
+        so the strong spectral hit stays visible; total length preserved."""
+        if not results or measured_ri is None or not self.alkane_ri:
+            return results
+        top3 = results[:3]
+        n_alk = sum(1 for r in top3 if _is_alkane_like(r.get('name', '')))
+        if n_alk < 2:                    # spectrum not alkane-dominated -> skip
+            return results
+        have = {_canon_alkane(r.get('name', '')) for r in results}
+        cands = sorted(((abs(ri - measured_ri), ri, c, nm)
+                        for ri, c, nm in self.alkane_ri
+                        if abs(ri - measured_ri) <= tol and c not in have),
+                       key=lambda x: x[0])
+        if not cands:
+            return results
+        keep = max(1, len(results) - min(max_inject, len(cands)))
+        injected = []
+        for d, ri, c, nm in cands[:max_inject]:
+            injected.append({
+                'name': nm, 'cas': '', 'fmf': 0, 'rmf': 0,
+                'ri_wax': ri, 'ri_db5': None,
+                'ri_diff': round(d, 1),
+                'source': 'RI-predicted',
+                'combined_score': float(results[0].get('rmf', 0)),
+            })
+        merged = results[:1] + injected + results[1:keep]
+        for i, r in enumerate(merged):
+            r['rank'] = i + 1
+        return merged
 
     def search_raw_spectrum(self, mz_array, int_array, top_n=5,
                               measured_ri=None):
         """NIST search + RI annotation + homolog injection (no re-ranking)."""
+        mz_array = np.asarray(mz_array, dtype=float)
+        int_array = np.asarray(int_array, dtype=float)
+        if len(mz_array) == 0:
+            return []
+
+        # Strip air/background ions before normalization, so the real base
+        # peak (not water) drives the match.
+        keep = np.array([round(m) not in AIR_IONS for m in mz_array])
+        if keep.any():
+            mz_array = mz_array[keep]
+            int_array = int_array[keep]
         if len(mz_array) == 0:
             return []
 
@@ -125,15 +210,9 @@ class NISTSearchEngine:
 
         try:
             ms = MassSpectrum(mz_list, int_list)
-            hits = self.engine.full_search_with_ref_data(ms)
+            hits = list(self.engine.full_search_with_ref_data(ms))
         except:
             return []
-
-        # Split hits into SearchResult and ReferenceData lists
-        sr_list = []; rd_list = []
-        for h in hits[:20]:
-            if isinstance(h, tuple) and len(h) >= 2:
-                sr_list.append(h[0]); rd_list.append(h[1])
 
         # ---- RI re-ranking (optional, disabled by default) ----
         # Enable with: USE_RI_RERANK = True
@@ -171,55 +250,16 @@ class NISTSearchEngine:
                 'rank': i + 1,
             })
 
-        return results
-
-    def search_spectrum(self, spectrum, mz_bins, top_n=5,
-                         measured_ri=None):
-        """NIST MS search (binned spectrum — legacy path)."""
-        mask = spectrum > 0
-        if not mask.any():
-            return []
-
-        mz_list = mz_bins[mask].tolist()
-        max_i = spectrum[mask].max()
-        int_list = (spectrum[mask] / max_i * 999).astype(int).tolist()
-
-        # ---- Pass 1: NIST MS search ----
+        # ---- RI-primary injection for branched alkanes ----
         try:
-            ms = MassSpectrum(mz_list, int_list)
-            hits = self.engine.full_search_with_ref_data(ms)
-        except Exception as e:
-            hits = []
+            from config import (RI_INJECT_ALKANES, RI_INJECT_TOL, RI_INJECT_MAX)
+        except ImportError:
+            RI_INJECT_ALKANES = False
+        if RI_INJECT_ALKANES:
+            results = self._inject_ri_alkanes(
+                results, measured_ri, tol=RI_INJECT_TOL, max_inject=RI_INJECT_MAX)
 
-        ms_results = []
-        for i, hit in enumerate(hits[:top_n]):
-            if not isinstance(hit, tuple) or len(hit) < 2:
-                continue
-            sr, ref = hit[0], hit[1]
-            name = getattr(ref, 'name', '') or ''
-            cas = getattr(ref, 'cas', '') or ''
-            mf = int(getattr(sr, 'match_factor', 0) or 0)
-            rmf = int(getattr(sr, 'reverse_match_factor', 0) or 0)
-
-            # Look up RI: CAS first, then name
-            ri_lit = None
-            ri_delta = None
-            if cas and cas in self.ri_by_cas:
-                ri_lit = self.ri_by_cas[cas].get('DB-WAX')
-            if ri_lit is None:
-                ri_lit = self.ri_by_name.get(name.lower())
-            if ri_lit and measured_ri:
-                ri_delta = abs(measured_ri - ri_lit)
-
-            ms_results.append({
-                'name': name, 'cas': cas,
-                'fmf': mf, 'rmf': rmf,
-                'ri': ri_lit, 'ri_diff': ri_delta,
-                'source': 'MS',
-                'combined_score': rmf,
-            })
-
-        return ms_results[:top_n]
+        return results
 
     def search_peaks_raw(self, peaks, scan_list, top_n=5, verbose=True):
         """Batch search + RI re-ranking (Goodner predictions included)."""
@@ -252,22 +292,4 @@ class NISTSearchEngine:
             all_matches.append(matches)
             if verbose and (i + 1) % 50 == 0:
                 print(f"    [NIST-BINNED] {i+1}/{len(peaks)} peaks searched")
-        return all_matches
-
-    def search_peaks_batch(self, peaks, intensity_matrix, mz_bins,
-                            top_n=10, verbose=True):
-        all_matches = []
-        for i, peak in enumerate(peaks):
-            if peak.get('enhanced_full') is not None:
-                spec = peak['enhanced_full']
-            else:
-                spec = intensity_matrix[peak['apex_idx'], :]
-
-            matches = self.search_spectrum(spec, mz_bins, top_n,
-                                            measured_ri=peak.get('ri_measured'))
-            all_matches.append(matches)
-
-            if verbose and (i + 1) % 50 == 0:
-                print(f"    [NIST+RI] {i+1}/{len(peaks)} peaks searched")
-
         return all_matches

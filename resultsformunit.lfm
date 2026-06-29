@@ -1,0 +1,62 @@
+object ResultsForm: TResultsForm
+  Left = 320
+  Height = 400
+  Top = 142
+  Width = 640
+  Caption = 'Results'
+  ClientHeight = 400
+  ClientWidth = 640
+  OnResize = FormResize
+  LCLVersion = '2.0.12.0'
+  object PageControl: TPageControl
+    Left = 0
+    Height = 400
+    Top = 0
+    Width = 640
+    ActivePage = TextTab
+    TabIndex = 0
+    TabOrder = 0
+    object TextTab: TTabSheet
+      Caption = 'Text'
+      ClientHeight = 370
+      ClientWidth = 630
+      object Memo1: TMemo
+        Left = 0
+        Height = 370
+        Top = 0
+        Width = 632
+        ScrollBars = ssVertical
+        TabOrder = 0
+      end
+    end
+    object TableTab: TTabSheet
+      Caption = 'Table'
+      ClientHeight = 370
+      ClientWidth = 630
+      object Grid: TStringGrid
+        Left = 0
+        Height = 370
+        Top = 0
+        Width = 632
+        AutoEdit = False
+        FixedCols = 0
+        Options = [goFixedVertLine, goFixedHorzLine, goVertLine, goHorzLine, goRangeSelect, goColSizing, goSmoothScroll, goFixedColSizing]
+        ScrollBars = ssVertical
+        TabOrder = 0
+      end
+    end
+    object FullTab: TTabSheet
+      Caption = 'Log'
+      ClientHeight = 370
+      ClientWidth = 630
+      object Memo2: TMemo
+        Left = 0
+        Height = 370
+        Top = 0
+        Width = 640
+        ScrollBars = ssVertical
+        TabOrder = 0
+      end
+    end
+  end
+end

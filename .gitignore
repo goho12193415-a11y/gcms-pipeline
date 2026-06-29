@@ -1,14 +1,26 @@
-.gitignore
+# ---- Python ----
 __pycache__/
 *.pyc
-*.pkl
-*.npy
+
+# ---- Outputs & scratch ----
 output/
-nist_work/
-library/*.json
-library/*.pkl
+_mzml_tmp/
+
+# ---- Raw / processed MS data (large; not for version control) ----
+*.raw
 *.mzML
-*.xlsx
 *.msp
-*.json
-!config.json
+
+# ---- NIST-derived databases ----
+# Derived from the commercial NIST library / NIST ri.dat — do NOT redistribute
+# publicly (license), and nist_gcms.json exceeds GitHub's 100 MB limit anyway.
+library/*.json
+
+# ---- CNN training data (large) ----
+cnnPolar.txt
+
+# ---- Thermo proprietary binaries (do not redistribute) ----
+thermo_lib/
+
+# ---- Source-material archives (may contain NIST-derived data) ----
+*.zip

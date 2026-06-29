@@ -92,6 +92,22 @@ def load_mzml_to_matrix(mzml_path: str) -> dict:
     }
 
 
+def load_sample(path: str) -> dict:
+    """Load a sample by extension: .RAW read natively (Thermo RawFileReader,
+    no conversion), anything else via pymzml. If the native reader's DLLs are
+    not available, fall back to RAW->mzML conversion. Same return structure."""
+    if str(path).lower().endswith('.raw'):
+        try:
+            from raw_reader import load_raw_to_matrix
+            return load_raw_to_matrix(path)
+        except RuntimeError as e:
+            print(f"       native RAW read unavailable ({e}); converting to mzML")
+            out_dir = Path(path).parent / "_mzml_tmp"
+            mzml = convert_raw_to_mzml(path, str(out_dir))
+            return load_mzml_to_matrix(mzml)
+    return load_mzml_to_matrix(path)
+
+
 def extract_eic(scan_list: list, target_mz: float, tolerance: float = 0.5) -> np.ndarray:
     """Extract Extracted Ion Chromatogram for a target m/z.
 

@@ -1,0 +1,37 @@
+object FormSMILES: TFormSMILES
+  Left = 292
+  Height = 407
+  Top = 218
+  Width = 414
+  Caption = 'Structure'
+  ClientHeight = 407
+  ClientWidth = 414
+  OnShow = FormShow
+  LCLVersion = '2.0.12.0'
+  object Image: TImage
+    Left = 8
+    Height = 400
+    Top = 0
+    Width = 400
+    Stretch = True
+  end
+  object Label1: TLabel
+    Left = 56
+    Height = 40
+    Top = 8
+    Width = 320
+    AutoSize = False
+    Caption = 'The structure was decoded from the SMILES string'
+    ParentColor = False
+    WordWrap = True
+  end
+  object ButtonOK: TButton
+    Left = 112
+    Height = 25
+    Top = 368
+    Width = 200
+    Caption = 'OK'
+    OnClick = ButtonOKClick
+    TabOrder = 0
+  end
+end

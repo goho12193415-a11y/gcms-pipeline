@@ -175,9 +175,12 @@ def process_single_sample(mzml_path: str, lib: SpectralLibrary,
         deconv = [[] for _ in peaks]
 
     # ---- Compute RI for all peaks first (needed for both search modes) ----
+    # Per-sample calibration: use the ladder derived from this sample's standard
+    # run (cfg['ri_ladder']) if provided, else the default Thermo DB-WAX ladder.
     from step7_library_search import calc_ri_from_rt
+    ri_ladder = cfg.get('ri_ladder') or ALKANE_RTS_DB_WAX
     for peak in peaks:
-        peak['ri_measured'] = calc_ri_from_rt(peak['apex_rt'], ALKANE_RTS_DB_WAX)
+        peak['ri_measured'] = calc_ri_from_rt(peak['apex_rt'], ri_ladder)
 
     # ---- Layer 6: Library search ----
     use_nist = cfg.get('use_nist', False)
@@ -229,6 +232,9 @@ def process_single_sample(mzml_path: str, lib: SpectralLibrary,
     print("  [L7] ICIS integration...")
     integrated = integrate_all_peaks(signal, data['rt'], peaks,
                                       use_peak_baseline=USE_PEAK_BASELINE)
+    for p in integrated:                          # carry per-sample RI forward
+        if 'ri_measured' not in p:
+            p['ri_measured'] = calc_ri_from_rt(p.get('apex_rt', 0), ri_ladder)
 
     # ---- Export MSP for NIST MS Search ----
     msp_path = output_dir / f"{sample_name}_spectra.msp"
@@ -292,6 +298,15 @@ def run_gcms_pipeline(raw_files: list = None, mzml_files: list = None,
     if library_path is None:
         library_path = LIBRARY_PATH
     cfg = dict(config or {})
+
+    # ---- Per-sample RI calibration: derive the alkane ladder from a standard ----
+    if cfg.get('standard_file') and not cfg.get('ri_ladder'):
+        from ri_calib import build_ri_ladder
+        print(f"\n[RI-calib] Deriving RI ladder from standard: "
+              f"{Path(cfg['standard_file']).name}")
+        ladder = build_ri_ladder(cfg['standard_file'])
+        if ladder:
+            cfg['ri_ladder'] = ladder
 
     print("=" * 55)
     print("  GC-MS Auto-Processing Pipeline v2.0")
@@ -383,8 +398,12 @@ def run_gcms_pipeline(raw_files: list = None, mzml_files: list = None,
 # ---- CLI ----
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description='GC-MS Pipeline v2.0')
-    ap.add_argument('--raw-files', nargs='+', help='Input .RAW files')
+    ap.add_argument('--raw-files', nargs='+', help='Input Thermo .RAW files')
     ap.add_argument('--mzml-files', nargs='+', help='Input .mzML files')
+    ap.add_argument('--files', nargs='+',
+                    help='Input samples of any format (.mzML/.RAW/.qgd) — auto-detected')
+    ap.add_argument('--standard', default=None,
+                    help='n-alkane standard run (.qgd/.RAW/.mzML) for per-sample RI calibration')
     ap.add_argument('--output', '-o', default=None, help='Output directory')
     ap.add_argument('--library', '-l', default=None, help='Library JSON')
     ap.add_argument('--min-sn', type=float, default=None)
@@ -394,8 +413,12 @@ if __name__ == "__main__":
     ap.add_argument('--config', default=None, help='JSON config override')
     args = ap.parse_args()
 
-    if not args.raw_files and not args.mzml_files:
-        ap.error("Specify --raw-files or --mzml-files")
+    # .qgd/.mzML go through mzml_files (load_sample dispatches by extension)
+    mzml_files = list(args.mzml_files or [])
+    if args.files:
+        mzml_files += args.files
+    if not args.raw_files and not mzml_files:
+        ap.error("Specify --files / --raw-files / --mzml-files")
 
     config = {}
     if args.config:
@@ -405,9 +428,10 @@ if __name__ == "__main__":
     if args.min_rmf: config['min_rmf'] = args.min_rmf
     if args.deconv: config['deconv_enabled'] = True
     if args.nist: config['use_nist'] = True
+    if args.standard: config['standard_file'] = args.standard
 
     result = run_gcms_pipeline(
-        raw_files=args.raw_files, mzml_files=args.mzml_files,
+        raw_files=args.raw_files, mzml_files=mzml_files,
         output_dir=args.output, library_path=args.library,
         config=config if config else None
     )

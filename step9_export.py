@@ -51,19 +51,58 @@ def _load_wax():
         _WAX_NORM.setdefault(_ri_canon(k), v)
 
 
-def _ri_check(meas_ri, top_name):
-    """Residual of the top-1 ID from the this-column<->literature DB-WAX
-    transform. 'OK' = RI corroborates the ID; 'suspect' = RI contradicts it;
-    'noRI' = no literature DB-WAX value to check against."""
-    from config import RI_QC_SLOPE, RI_QC_INTERCEPT, RI_QC_TOL, ALKANE_RTS_DB_WAX
+def _lit_ri(name):
+    if not name:
+        return None
+    _load_wax()
+    return _WAX.get(name.lower().strip()) or _WAX_NORM.get(_ri_canon(name))
+
+
+def _fit_ri_transform(integrated_peaks, identification_results, rmf_min=850):
+    """Self-calibrating per-sample: fit literatureRI = a*measuredRI + b from this
+    sample's own confident top-1 hits (strong MS + has literature RI), so RI_Check
+    works on ANY column/instrument without hard-coded constants. Returns (a, b)
+    or None if too few consistent anchors to calibrate."""
+    import numpy as np
+    pts = []
+    for i, p in enumerate(integrated_peaks):
+        m = identification_results[i] if i < len(identification_results) else []
+        if not m:
+            continue
+        mri = p.get('ri_measured'); lit = _lit_ri(m[0].get('name', ''))
+        if mri and lit and m[0].get('rmf', 0) >= rmf_min:
+            pts.append((mri, lit))
+    if len(pts) < 6:
+        return None
+    x = np.array([a for a, _ in pts], float); y = np.array([b for _, b in pts], float)
+    # Theil-Sen: median of pairwise slopes — robust to outliers (e.g. RI
+    # extrapolated below the alkane ladder) without overfitting a subset.
+    slopes = [(y[j] - y[i]) / (x[j] - x[i])
+              for i in range(len(x)) for j in range(i + 1, len(x))
+              if x[j] != x[i]]
+    if not slopes:
+        return None
+    a = float(np.median(slopes))
+    b = float(np.median(y - a * x))
+    # accept only if the robust fit actually explains most points
+    med_resid = float(np.median(np.abs(y - (a * x + b))))
+    return (a, b) if med_resid <= 25 else None
+
+
+def _ri_check(meas_ri, top_name, transform):
+    """RI corroboration of the top-1 ID against the per-sample transform.
+    OK = RI agrees; suspect = RI contradicts; noRI = no literature value;
+    noCal = couldn't calibrate this sample (too few anchors)."""
+    from config import RI_QC_TOL
     if not meas_ri or not top_name:
         return ''
-    _load_wax()
-    lit = _WAX.get(top_name.lower().strip()) or _WAX_NORM.get(_ri_canon(top_name))
+    lit = _lit_ri(top_name)
     if lit is None:
         return 'noRI'
-    resid = lit - (RI_QC_SLOPE * meas_ri + RI_QC_INTERCEPT)
-    return 'OK' if abs(resid) <= RI_QC_TOL else 'suspect'
+    if transform is None:
+        return 'noCal'
+    a, b = transform
+    return 'OK' if abs(lit - (a * meas_ri + b)) <= RI_QC_TOL else 'suspect'
 
 
 # ---- Contaminant patterns ----
@@ -182,6 +221,10 @@ def compile_results(sample_name, integrated_peaks, identification_results,
     identification_results[i] = [match1, match2, match3, ...]
     """
     rows = []
+    # fit this sample's column<->literature RI transform once (self-calibrating)
+    _ri_tx = _fit_ri_transform(integrated_peaks, identification_results)
+    if _ri_tx:
+        print(f"  [RI-QC] self-calibrated transform: litRI={_ri_tx[0]:.3f}*measRI+{_ri_tx[1]:.0f}")
 
     for i, peak in enumerate(integrated_peaks):
         matches = identification_results[i] if i < len(identification_results) else []
@@ -190,11 +233,8 @@ def compile_results(sample_name, integrated_peaks, identification_results,
         status, status_reason = _auto_confirm_status(matches)
         top = matches[0] if matches else {}
 
-        # RI QC on the top-1 ID (this-column <-> literature transform residual)
-        from step7_library_search import calc_ri_from_rt
-        from config import ALKANE_RTS_DB_WAX
-        _mri = calc_ri_from_rt(peak.get('apex_rt', 0), ALKANE_RTS_DB_WAX)
-        ri_check = _ri_check(_mri, top.get('name', ''))
+        # RI QC on the top-1 ID (self-calibrated per-sample transform residual)
+        ri_check = _ri_check(peak.get('ri_measured'), top.get('name', ''), _ri_tx)
 
         # Peak info (shared across all candidates for this peak)
         base = {

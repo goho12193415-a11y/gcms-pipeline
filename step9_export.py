@@ -316,8 +316,17 @@ def export_to_excel(results_df, output_path, calibration_data=None):
     # plus any RI=suspect (MS says yes but RI contradicts — catch these even if
     # MS-confident). Trust green + RI-OK; skip red(contaminant) & gray(low) in
     # the primary list (gray = low-signal, glance only).
-    need = r1[(((r1['Status'] == 'REVIEW') & (ric != 'OK')) | (ric == 'suspect'))
-              & (r1['Status'] != 'CONTAMINANT')]
+    review_mask = ((((r1['Status'] == 'REVIEW') & (ric != 'OK')) | (ric == 'suspect'))
+                   & (r1['Status'] != 'CONTAMINANT'))
+    # drop trace peaks below the area-% floor (kept in Results, not actively reviewed)
+    try:
+        from config import REVIEW_MIN_AREA_PCT as _AREA_FLOOR
+    except ImportError:
+        _AREA_FLOOR = 0.0
+    pct = pd.to_numeric(r1.get('Percentage', pd.Series(index=r1.index, dtype=float)),
+                        errors='coerce').fillna(1e9)
+    n_trace = int((review_mask & (pct < _AREA_FLOOR)).sum())
+    need = r1[review_mask & (pct >= _AREA_FLOOR)]
     rev_cols = [c for c in ['Peak_No', 'RT_min', 'Area', 'Percentage', 'Status',
                             'RI_Check', 'Compound_Name', 'RMF', 'FMF', 'RI_WAX', 'CAS']
                 if c in need.columns]
@@ -329,12 +338,12 @@ def export_to_excel(results_df, output_path, calibration_data=None):
     n_contam = int(sc.get('CONTAMINANT', 0))
     n_low = int(sc.get('LOW', 0))
     n_review = int(len(need))
-    n_trust = n_total - n_review - n_contam - n_low   # green + RI-confirmed
+    n_trust = n_total - n_review - n_contam - n_low - n_trace   # green + RI-confirmed
     summary_df = pd.DataFrame({
         '项目': ['峰总数', '可信免审(绿+RI双证据确认)', '★待复核(看"待复核"表)',
-                 '污染物(红,可跳过)', '低置信(灰,信号弱,可略看)',
+                 f'微量峰(<{_AREA_FLOOR}%,免复核)', '污染物(红,可跳过)', '低置信(灰,信号弱,可略看)',
                  '— RI核对OK', '— RI核对可疑', '— 无文献RI可核对'],
-        '数量': [n_total, n_trust, n_review, n_contam, n_low,
+        '数量': [n_total, n_trust, n_review, n_trace, n_contam, n_low,
                  int(rc.get('OK', 0)), int(rc.get('suspect', 0)), int(rc.get('noRI', 0))],
     })
 

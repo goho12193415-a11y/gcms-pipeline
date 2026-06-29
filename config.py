@@ -115,6 +115,10 @@ EXPORT_FORMAT = "xlsx"
 # correct answer for weak/replib-recovered peaks can sit at rank 6-8, so the
 # review window is widened from 3 to 8 to surface them.
 TOP_N_CANDIDATES = 8
+# Peaks below this area-% are trace/noise that analysts normally don't report;
+# they're kept in the full Results sheet but dropped from the 待复核 review
+# checklist (set 0 to review everything). CLI: --review-min-area
+REVIEW_MIN_AREA_PCT = 0.05
 
 # ---- Step 10: QC ----
 QC_SAMPLE_PATTERN = "QC"

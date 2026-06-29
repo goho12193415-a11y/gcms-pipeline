@@ -406,6 +406,8 @@ if __name__ == "__main__":
                     help='n-alkane standard run (.qgd/.RAW/.mzML) for per-sample RI calibration')
     ap.add_argument('--solvent-delay', type=float, default=None,
                     help='exclude peaks before this RT (min); set per method')
+    ap.add_argument('--review-min-area', type=float, default=None,
+                    help='drop peaks below this area%% from the review checklist')
     ap.add_argument('--output', '-o', default=None, help='Output directory')
     ap.add_argument('--library', '-l', default=None, help='Library JSON')
     ap.add_argument('--min-sn', type=float, default=None)
@@ -432,6 +434,8 @@ if __name__ == "__main__":
     if args.nist: config['use_nist'] = True
     if args.standard: config['standard_file'] = args.standard
     if args.solvent_delay is not None: config['solvent_delay'] = args.solvent_delay
+    if args.review_min_area is not None:
+        import config as _cfg; _cfg.REVIEW_MIN_AREA_PCT = args.review_min_area
 
     result = run_gcms_pipeline(
         raw_files=args.raw_files, mzml_files=mzml_files,

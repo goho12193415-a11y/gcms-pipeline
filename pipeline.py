@@ -128,7 +128,7 @@ def process_single_sample(mzml_path: str, lib: SpectralLibrary,
         signal, data['rt'],
         min_sn=cfg.get('min_sn', MIN_SN),
         min_peak_width_scans=cfg.get('min_peak_width', MIN_PEAK_WIDTH_SCANS),
-        solvent_delay_min=4.0
+        solvent_delay_min=cfg.get('solvent_delay', SOLVENT_DELAY_MIN)
     )
     print(f"       {len(peaks)} peaks detected")
 
@@ -404,6 +404,8 @@ if __name__ == "__main__":
                     help='Input samples of any format (.mzML/.RAW/.qgd) — auto-detected')
     ap.add_argument('--standard', default=None,
                     help='n-alkane standard run (.qgd/.RAW/.mzML) for per-sample RI calibration')
+    ap.add_argument('--solvent-delay', type=float, default=None,
+                    help='exclude peaks before this RT (min); set per method')
     ap.add_argument('--output', '-o', default=None, help='Output directory')
     ap.add_argument('--library', '-l', default=None, help='Library JSON')
     ap.add_argument('--min-sn', type=float, default=None)
@@ -429,6 +431,7 @@ if __name__ == "__main__":
     if args.deconv: config['deconv_enabled'] = True
     if args.nist: config['use_nist'] = True
     if args.standard: config['standard_file'] = args.standard
+    if args.solvent_delay is not None: config['solvent_delay'] = args.solvent_delay
 
     result = run_gcms_pipeline(
         raw_files=args.raw_files, mzml_files=mzml_files,

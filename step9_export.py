@@ -308,7 +308,39 @@ def export_to_excel(results_df, output_path, calibration_data=None):
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
+    # ---- Build review checklist + summary (analyst workflow: trust green+OK,
+    #      review only the uncertain ones, skip contaminants) ----
+    r1 = results_df[results_df['Rank'] == 1].copy() if 'Rank' in results_df.columns else results_df.copy()
+    ric = r1['RI_Check'] if 'RI_Check' in r1.columns else pd.Series([''] * len(r1), index=r1.index)
+    # Review only the YELLOW (needs-review) peaks that are NOT RI-corroborated,
+    # plus any RI=suspect (MS says yes but RI contradicts — catch these even if
+    # MS-confident). Trust green + RI-OK; skip red(contaminant) & gray(low) in
+    # the primary list (gray = low-signal, glance only).
+    need = r1[(((r1['Status'] == 'REVIEW') & (ric != 'OK')) | (ric == 'suspect'))
+              & (r1['Status'] != 'CONTAMINANT')]
+    rev_cols = [c for c in ['Peak_No', 'RT_min', 'Area', 'Percentage', 'Status',
+                            'RI_Check', 'Compound_Name', 'RMF', 'FMF', 'RI_WAX', 'CAS']
+                if c in need.columns]
+    review_df = need[rev_cols].sort_values('Area', ascending=False) if not need.empty else need[rev_cols]
+
+    sc = r1['Status'].value_counts()
+    rc = ric.value_counts()
+    n_total = int(r1['Peak_No'].nunique()) if 'Peak_No' in r1 else len(r1)
+    n_contam = int(sc.get('CONTAMINANT', 0))
+    n_low = int(sc.get('LOW', 0))
+    n_review = int(len(need))
+    n_trust = n_total - n_review - n_contam - n_low   # green + RI-confirmed
+    summary_df = pd.DataFrame({
+        '项目': ['峰总数', '可信免审(绿+RI双证据确认)', '★待复核(看"待复核"表)',
+                 '污染物(红,可跳过)', '低置信(灰,信号弱,可略看)',
+                 '— RI核对OK', '— RI核对可疑', '— 无文献RI可核对'],
+        '数量': [n_total, n_trust, n_review, n_contam, n_low,
+                 int(rc.get('OK', 0)), int(rc.get('suspect', 0)), int(rc.get('noRI', 0))],
+    })
+
     with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
+        summary_df.to_excel(writer, sheet_name='汇总', index=False)
+        review_df.to_excel(writer, sheet_name='待复核', index=False)
         results_df.to_excel(writer, sheet_name='Results', index=False)
 
     # ---- Apply formatting with openpyxl ----

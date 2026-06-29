@@ -21,6 +21,9 @@ BASELINE_P = 0.001         # AsLS asymmetry (0.001~0.01)
 MIN_SN = 10.0              # Minimum signal-to-noise ratio (was 5.0)
 MIN_PEAK_WIDTH_SCANS = 3   # Minimum peak width in scan points
 SMOOTH_SIGMA = 1.0         # Gaussian smoothing sigma before peak detection
+SOLVENT_DELAY_MIN = 4.0    # Exclude peaks before this RT (set per method;
+                           # Thermo kelp run ~4.0, Shimadzu 安琪 run ~2.0 — early
+                           # peaks like ethanol/hexanal elute <4 there). CLI: --solvent-delay
 
 # ---- Step 4: Deconvolution ----
 MZ_MIN = 35                # Minimum m/z for intensity matrix

@@ -96,7 +96,11 @@ def load_sample(path: str) -> dict:
     """Load a sample by extension: .RAW read natively (Thermo RawFileReader,
     no conversion), anything else via pymzml. If the native reader's DLLs are
     not available, fall back to RAW->mzML conversion. Same return structure."""
-    if str(path).lower().endswith('.raw'):
+    low = str(path).lower()
+    if low.endswith('.qgd'):                     # Shimadzu GCMSsolution
+        from qgd_reader import load_qgd_to_matrix
+        return load_qgd_to_matrix(path)
+    if low.endswith('.raw'):                     # Thermo
         try:
             from raw_reader import load_raw_to_matrix
             return load_raw_to_matrix(path)

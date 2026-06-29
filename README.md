@@ -1,6 +1,6 @@
 # GC-MS 自动数据处理系统 v2.1
 
-**Thermo .RAW → 峰检测 → NIST 搜索 → Excel 报告，一键完成。**
+**原始数据 → 峰检测 → NIST 搜索 → RI 标定 → Excel 审核报告，一键完成。**
 
 ---
 
@@ -10,38 +10,42 @@ go ho
 
 ## 简介
 
-本系统用于 GC-MS（气相色谱-质谱联用）数据的全自动处理。输入 Thermo Fisher 仪器的 `.RAW` 原始文件或 `.mzML` 开放格式文件，自动完成基线校正、色谱峰检测、谱图增强、NIST 质谱库搜索和保留指数（RI）计算，最终输出带颜色标注的 Excel 审核报告。
+本系统用于 GC-MS（气相色谱-质谱联用）数据的全自动处理。**跨仪器支持**：Thermo Fisher `.RAW`（原生直读）、`.mzML`、岛津 GCMSsolution `.qgd`，自动识别格式。自动完成基线校正、色谱峰检测、空气背景离子剔除、NIST 质谱库搜索、保留指数（RI）标定与核对，最终输出分级的 Excel 审核报告。
 
-核心技术：SNIP 基线校正（向量化实现）、ICIS 峰检测算法（赛默飞 Genesis 同等逻辑）、空气背景离子剔除（m/z 17/18/28/32/40/44，解决低丰度峰被水峰主导的问题），以及通过 pyms-nist-search 调用的 NIST 官方质谱搜索引擎。
+核心技术：SNIP 基线校正（向量化实现）、ICIS 峰检测（赛默飞 Genesis 同等逻辑）、空气背景离子剔除（解决低丰度峰被水峰主导的问题）、通过 pyms-nist-search 调用 NIST 官方引擎（mainlib + 复本库 replib）、**按样品 RI 标定**（用本仪器跑的正构烷烃标品自动建立 RT→RI，并对每个鉴定做 MS+RI 双证据核对）。
 
-保留指数（RI）数据库包含 46,000 条 DB-5 文献值和 16,000 条 DB-WAX 文献值，支持双柱交叉验证鉴定。
-
-## 性能
-
-在本课题样品（海带挥发性化合物，DB-WAX 柱）上，对照 49 个人工鉴定（`eval/score.py` 裁定）：**top-1 命中 41%（20/49），top-5 命中 47%（23/49），top-8 命中 53%（26/49）**。top-8 在 mainlib 的基础上并入 NIST 复本库（replib）的候选——复本库在独立进程中搜索后离线合并（同进程双库会因 NIST DLL 单库全局状态而互相污染）。剩余分歧主要是物理/数据极限，非软件缺陷：（1）支链烷烃同分异构体在 EI 质谱中无法区分，且缺少 DB-WAX 文献 RI 值（正确同系物根本不在 NIST 谱图候选池内，RI 重排/CNN 预测 RI 注入均已实测证伪）；（2）E/Z 异构体的四极杆物理极限；（3）低信号化合物信噪比不足；（4）部分人工鉴定标注本身自相矛盾。详细诊断见《项目技术档案.md》，回归守卫见 `eval/regression.py`。
+保留指数（RI）数据库含 46,000 条 DB-5 与 16,000 条 DB-WAX 文献值。
 
 ## 快速开始
 
 ```bash
-# 安装依赖
-pip install numpy scipy pandas openpyxl pymzml pyms-nist-search
+# 安装依赖（olefile 读 .qgd；pythonnet 原生读 .RAW）
+pip install numpy scipy pandas openpyxl pymzml pyms-nist-search olefile pythonnet
 
-# 图形界面（推荐）
+# 图形界面（推荐）：选样品(.RAW/.mzML/.qgd) + RI 标品 + 溶剂延迟 → START
 双击 软件\启动.bat
 
 # 命令行
-python pipeline.py --mzml-files sample.mzML --nist
+python pipeline.py --files sample.qgd --standard alkanes.qgd --nist --solvent-delay 2.0
 ```
 
 ## 输出
 
-Excel 报告包含：
-- 峰面积与峰高
-- 每个峰的前三名 NIST 候选鉴定
-- 匹配因子（FMF/RMF）
-- DB-WAX 和 DB-5 双柱文献保留指数
-- 自动审核状态：绿（自动确认）· 黄（待审核）· 红（污染物）· 灰（低置信）
-- 人工确认列（供用户填写）
+Excel 报告含三张表（按此顺序看最省力）：
+- **汇总**：峰总数、可信免审、待复核、微量峰、污染物、低置信的数量
+- **待复核**：只列需人工核对的峰（黄色无 RI 佐证 + RI 可疑），按面积排序；
+  可信(绿+RI双证据)/微量/污染物/低置信已自动归类，无需逐个翻
+- **Results**：全部峰的前 8 名候选，含 FMF/RMF、双柱 RI、`RI_Check`
+  （OK/suspect/noRI/noCal，MS+RI 双证据核对）、`Source`（replib 标记）、
+  审核状态（绿/黄/红/灰）、人工确认列
+
+## 性能（跨仪器验证）
+
+- **Thermo**（海带挥发物，对照 49 个人工鉴定，`eval/score.py`）：top-1 41%、top-5 47%、top-8 53%。
+- **岛津 .qgd**（对照 GCMSsolution 结果，61 峰）：top-1 50%、top-5 72%。
+- 这是"与厂商/人工结果的一致度"，非绝对准确率（双方都是 NIST 搜索结果）；
+  剩余分歧主要是 EI 物理极限（支链烷烃同分异构体）+ 弱峰 + 厂商低置信标注。
+  详见《项目技术档案.md》，回归守卫见 `eval/regression.py`。
 
 ## 系统要求
 

@@ -1,0 +1,105 @@
+================================================================================
+  GC-MS 自动数据处理系统 v2.1 — 安装教程
+  Copyright (c) 2026 go ho
+================================================================================
+
+一、系统要求
+-----------
+1. Windows 10 或 Windows 11
+2. Python 3.11 或更高版本
+3. 约 2GB 磁盘空间（软件 3.5MB + NIST 谱库 807MB + Python 环境约 1GB）
+
+
+二、安装 Python（如已安装可跳过）
+---------------------------------
+方法一：Microsoft Store 安装（推荐，无需管理员权限）
+  1. 打开 Microsoft Store，搜索 "Python 3.11"
+  2. 点击安装
+  3. 安装完成后，打开命令提示符（Win+R，输入 cmd，回车）
+  4. 输入 python --version，显示版本号即安装成功
+
+方法二：官网安装
+  1. 访问 https://www.python.org/downloads/
+  2. 下载 Python 3.11.x 安装包
+  3. 安装时务必勾选 "Add Python to PATH"
+  4. 完成后验证同上
+
+
+三、安装依赖包（只需执行一次）
+-----------------------------
+1. 双击本文件夹中的 "安装依赖.bat"
+2. 等待安装完成（约 2-5 分钟，视网络速度而定）
+3. 出现 "Setup complete!" 即安装成功
+
+如安装失败，可手动执行：
+  Win+R → 输入 cmd → 回车
+  输入：pip install numpy scipy pandas openpyxl pymzml pyms-nist-search olefile pythonnet
+
+  说明：olefile 用于读取岛津 .qgd 数据；pythonnet 用于原生直读 Thermo .RAW。
+
+
+四、确认文件夹结构
+-----------------
+安装完成后，文件夹结构应如下：
+
+  GCMS_Software/
+  ├── 安装依赖.bat
+  ├── 安装教程.txt        ← 本文件
+  ├── 使用教程.txt
+  ├── 谱库/               ← NIST 谱库（807MB，已就绪）
+  │   ├── mainlib/
+  │   └── nist_ri/
+  └── 软件/               ← 软件本体
+      ├── 启动.bat          ← 日常使用双击此文件
+      ├── gui.py
+      ├── pipeline.py
+      ├── qgd_reader.py     ← 岛津 .qgd 读取
+      ├── ri_calib.py       ← 保留指数标定
+      ├── thermo_lib/       ← 原生读 .RAW 所需的 Thermo DLL（已内置）
+      ├── library/          ← RI 数据库
+      └── ...
+
+请勿移动或重命名 "谱库" 和 "软件" 文件夹，否则软件无法找到 NIST 库。
+
+支持的数据格式：Thermo .RAW（原生直读）、.mzML、岛津 GCMSsolution .qgd。
+
+
+五、启动软件
+-----------
+双击 "软件\启动.bat" 即可打开图形界面。
+
+如窗口一闪而过，说明依赖未正确安装，请重新执行第三步。
+
+
+六、卸载
+-------
+直接删除整个 GCMS_Software 文件夹即可，无注册表残留。
+
+
+七、常见问题
+-----------
+Q: 启动报错 "No module named 'xxx'"
+A: 依赖包未完整安装，重新执行 "安装依赖.bat"
+
+Q: 启动后提示找不到 NIST 库
+A: 确认 "谱库" 文件夹与 "软件" 文件夹在同一目录下
+
+Q: 处理 .RAW 文件报错
+A: 原生直读需要 pythonnet（已在"安装依赖.bat"中）和内置的 thermo_lib（Thermo DLL，
+   随软件附带）。若提示找不到 DLL，软件会自动回退到 RAW→mzML 转换；该回退需要
+   ThermoRawFileParser（https://github.com/compomics/ThermoRawFileParser/releases），
+   将其解压到 C:\Tools\ThermoRawFileParser 即可。
+
+Q: 处理岛津 .qgd 文件报错
+A: 需安装 olefile（已在"安装依赖.bat"中）。重新执行第三步即可。
+
+Q: 保留指数（RI）标定怎么用？
+A: 在界面 "RI standard" 处选择本仪器跑的正构烷烃标品（.qgd/.RAW/.mzML），
+   软件会据此对样品做 RI 标定并输出 RI_Check 列。标品须与样品同批次/同期测定。
+
+Q: 软件是否收费？
+A: 完全免费。MIT 开源协议。
+
+================================================================================
+  版本：v2.1  |  日期：2026-06-29  |  著作权人：go ho
+================================================================================

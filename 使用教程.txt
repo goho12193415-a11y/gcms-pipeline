@@ -125,13 +125,33 @@ Excel 报告包含以下工作表：
   python pipeline.py --mzml-files sample.mzML --nist
 
   参数：
-    --raw-files   输入 .RAW 文件
+    --files       输入样品（任意格式 .mzML/.RAW/.qgd，自动识别）
+    --raw-files   输入 Thermo .RAW 文件
     --mzml-files  输入 .mzML 文件
+    --standard    正构烷烃标品（.qgd/.RAW/.mzML），用于本样品的 RI 标定
     --output      输出目录
     --nist        使用 NIST 引擎（推荐）
     --deconv      启用解卷积
     --min-sn      最低信噪比
     --min-rmf     最低匹配因子
+
+  支持仪器格式：Thermo（.RAW 原生直读 / .mzML）、岛津 GCMSsolution（.qgd）。
+
+九之一、保留指数（RI）标定与 RI_Check 列
+-----------------------------------------
+  加 --standard 指向正构烷烃标品，软件会自动提取该标品的 RT→RI 梯度，
+  对本样品做 RI 标定，并在 Excel 输出 RI_Check 列：
+    OK      = 实测 RI 与文献值一致，质谱+RI 双证据支持该鉴定（可信）
+    suspect = RI 与鉴定矛盾，建议复核
+    noRI    = 该化合物无文献 RI，无法核对
+    noCal   = 本样品可校准的化合物太少，未做 RI 标定
+
+  例：python pipeline.py --files 样品.qgd --standard 标品.qgd --nist
+
+  ★ 重要：标品必须与样品「同一批次/同期」测定。
+    保留时间会随柱子老化漂移；若标品和样品相隔较久（如数月），
+    RI 标定会不准，RI_Check 可能误判。要得到干净的 RI_Check，
+    请用与样品同一序列跑的正构烷烃标品。
 
 九、技术支持
 -----------

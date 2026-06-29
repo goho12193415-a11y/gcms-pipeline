@@ -22,7 +22,7 @@ class GCMSApp:
     def __init__(self, root):
         self.root = root
         self.root.title('GC-MS Auto-Processing v2.1')
-        self.root.geometry('680x540')
+        self.root.geometry('680x600')
         self.root.resizable(True, True)
         bg = '#f5f5f5'
         ac = '#2F5496'
@@ -42,11 +42,8 @@ class GCMSApp:
         self.lb.pack(fill='x', pady=(0, 5))
         bf = tk.Frame(ff, bg=bg)
         bf.pack(fill='x')
-        tk.Button(bf, text='+ Add .RAW', command=self.add_raw,
+        tk.Button(bf, text='+ Add samples (.RAW / .mzML / .qgd)', command=self.add_sample,
                  bg='#4a90d9', fg='white', font=('Segoe UI', 9),
-                 padx=10).pack(side='left', padx=(0, 5))
-        tk.Button(bf, text='+ Add .mzML', command=self.add_mzml,
-                 bg='#6c757d', fg='white', font=('Segoe UI', 9),
                  padx=10).pack(side='left', padx=(0, 5))
         tk.Button(bf, text='Clear', command=self.clear,
                  bg='#dc3545', fg='white', font=('Segoe UI', 9),
@@ -62,7 +59,17 @@ class GCMSApp:
         tk.Entry(r1, textvariable=self.sn, width=8).pack(side='left', padx=(0, 25))
         tk.Label(r1, text='Min RMF:', bg=bg, width=10).pack(side='left')
         self.rmf = tk.StringVar(value='700')
-        tk.Entry(r1, textvariable=self.rmf, width=8).pack(side='left')
+        tk.Entry(r1, textvariable=self.rmf, width=8).pack(side='left', padx=(0, 25))
+        tk.Label(r1, text='Solvent delay (min):', bg=bg).pack(side='left')
+        self.sd = tk.StringVar(value='4.0')
+        tk.Entry(r1, textvariable=self.sd, width=6).pack(side='left')
+        rs = tk.Frame(sf, bg=bg)
+        rs.pack(fill='x', pady=3)
+        tk.Label(rs, text='RI standard:', bg=bg, width=10).pack(side='left')
+        self.std = tk.StringVar(value='')
+        tk.Entry(rs, textvariable=self.std, width=42).pack(side='left', padx=(0, 5))
+        tk.Button(rs, text='Browse', command=self.browse_std, bg='#e0e0e0', padx=8).pack(side='left')
+        tk.Button(rs, text='X', command=lambda: self.std.set(''), bg='#e0e0e0', padx=4).pack(side='left', padx=(4, 0))
         r2 = tk.Frame(sf, bg=bg)
         r2.pack(fill='x', pady=3)
         tk.Label(r2, text='Output:', bg=bg, width=10).pack(side='left')
@@ -101,18 +108,11 @@ class GCMSApp:
     def log(self, msg):
         print(msg)
 
-    def add_raw(self):
+    def add_sample(self):
         files = filedialog.askopenfilenames(
-            title='Select .RAW files',
-            filetypes=[('Thermo RAW', '*.raw *.RAW'), ('All', '*.*')])
-        for f in files:
-            if f not in self.lb.get(0, tk.END):
-                self.lb.insert(tk.END, f)
-
-    def add_mzml(self):
-        files = filedialog.askopenfilenames(
-            title='Select .mzML files',
-            filetypes=[('mzML', '*.mzML *.mzml'), ('All', '*.*')])
+            title='Select sample files (Thermo .RAW / .mzML / Shimadzu .qgd)',
+            filetypes=[('GC-MS data', '*.raw *.RAW *.mzML *.mzml *.qgd *.QGD'),
+                       ('All', '*.*')])
         for f in files:
             if f not in self.lb.get(0, tk.END):
                 self.lb.insert(tk.END, f)
@@ -125,20 +125,26 @@ class GCMSApp:
         if d:
             self.out.set(d)
 
+    def browse_std(self):
+        f = filedialog.askopenfilename(
+            title='Select n-alkane standard for RI calibration (.qgd/.RAW/.mzML)',
+            filetypes=[('GC-MS data', '*.raw *.RAW *.mzML *.mzml *.qgd *.QGD'),
+                       ('All', '*.*')])
+        if f:
+            self.std.set(f)
+
     def run(self):
         files = list(self.lb.get(0, tk.END))
         if not files:
-            messagebox.showwarning('No Files', 'Please add .RAW or .mzML files first.')
+            messagebox.showwarning('No Files', 'Please add sample files first (.RAW/.mzML/.qgd).')
             return
+        # .RAW -> native Thermo reader; .mzML/.qgd -> load_sample (dispatched by extension)
         raw = [f for f in files if f.lower().endswith('.raw')]
-        mzml = [f for f in files if not f.lower().endswith('.raw')]
-        if not raw and not mzml:
-            messagebox.showwarning('Invalid', 'Please add .RAW or .mzML files.')
-            return
+        other = [f for f in files if not f.lower().endswith('.raw')]
         self.btn.config(state='disabled', text='Running...')
         self.pb.start(10)
         self.st.set('Processing ' + str(len(files)) + ' sample(s)...')
-        threading.Thread(target=self._run, args=(raw, mzml), daemon=True).start()
+        threading.Thread(target=self._run, args=(raw, other), daemon=True).start()
 
     def _run(self, raw, mzml):
         try:
@@ -149,6 +155,13 @@ class GCMSApp:
                 'use_nist': self.nist.get(),
                 'deconv_enabled': self.dec.get(),
             }
+            try:
+                cfg['solvent_delay'] = float(self.sd.get())
+            except (ValueError, TypeError):
+                pass
+            std = self.std.get().strip()
+            if std:
+                cfg['standard_file'] = std
             out_dir = self.out.get() or str(SCRIPT_DIR / 'output')
             result = run_gcms_pipeline(
                 raw_files=raw if raw else None,
@@ -171,8 +184,10 @@ class GCMSApp:
             t = result.get('total', '?')
             print('\nDone! ' + str(n) + '/' + str(t) + ' samples')
             print('Output: ' + o)
+            print('Excel sheets: 汇总 (summary) -> 待复核 (review checklist) -> Results')
             if messagebox.askyesno('Complete',
-                                   'Done. ' + str(n) + '/' + str(t) + ' samples.\n\nOpen output folder?'):
+                                   'Done. ' + str(n) + '/' + str(t) + ' samples.\n\n'
+                                   'Excel: 汇总 → 待复核(只看要审的) → Results\n\nOpen output folder?'):
                 os.startfile(str(Path(o).parent))
         else:
             self.st.set('Done (no output)')

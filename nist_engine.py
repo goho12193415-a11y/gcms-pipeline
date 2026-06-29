@@ -129,9 +129,25 @@ class NISTSearchEngine:
         except:
             return []
 
-        # Top-5 from NIST (keep NIST's ranking)
+        # Split hits into SearchResult and ReferenceData lists
+        sr_list = []; rd_list = []
+        for h in hits[:20]:
+            if isinstance(h, tuple) and len(h) >= 2:
+                sr_list.append(h[0]); rd_list.append(h[1])
+
+        # ---- RI re-ranking (optional, disabled by default) ----
+        # Enable with: USE_RI_RERANK = True
+        # Currently off: CAS table coverage too low to improve overall results
+        #
+        # if measured_ri is not None and sr_list:
+        #     try:
+        #         from ri_reranker import rerank_pyms_results
+        #         reranked = rerank_pyms_results(...)
+        #     ...
+
+        # Standard: top-5 from NIST with RI annotation only
         results = []
-        for i, hit in enumerate(hits[:5]):
+        for i, hit in enumerate(hits[:top_n]):
             if not isinstance(hit, tuple) or len(hit) < 2:
                 continue
             sr, ref = hit[0], hit[1]

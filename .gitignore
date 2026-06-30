@@ -14,7 +14,8 @@ _mzml_tmp/
 # ---- NIST-derived databases ----
 # Derived from the commercial NIST library / NIST ri.dat — do NOT redistribute
 # publicly (license), and nist_gcms.json exceeds GitHub's 100 MB limit anyway.
-library/*.json
+library/
+*.bak
 
 # ---- CNN training data (large) ----
 cnnPolar.txt

@@ -147,3 +147,9 @@ RI_COLUMN = "DB-WAX"
 RI_QC_SLOPE = 0.635
 RI_QC_INTERCEPT = 490
 RI_QC_TOL = 30
+# When a compound has NO literature RI, fall back to the project's CNN-predicted
+# DB-WAX RI (library/ri_nist_full.json) as a LAST RESORT — flagged distinctly
+# (OK-pred / suspect-pred) and never treated as trustworthy as a literature
+# match. Looser tolerance because the prediction itself carries ~±30-50 error.
+RI_QC_USE_PREDICTED = True
+RI_QC_PRED_TOL = 50

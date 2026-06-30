@@ -58,6 +58,34 @@ def _lit_ri(name):
     return _WAX.get(name.lower().strip()) or _WAX_NORM.get(_ri_canon(name))
 
 
+_PRED = None
+_PRED_NORM = None
+
+
+def _load_pred():
+    """CNN-predicted DB-WAX RI (library/ri_nist_full.json) — last-resort only."""
+    global _PRED, _PRED_NORM
+    if _PRED is not None:
+        return
+    import json
+    from config import PROJECT_DIR
+    try:
+        d = json.load(open(PROJECT_DIR / "library" / "ri_nist_full.json", encoding='utf-8'))
+        _PRED = {k.lower(): v for k, v in d.get('name_to_ri', {}).items()}
+    except Exception:
+        _PRED = {}
+    _PRED_NORM = {}
+    for k, v in _PRED.items():
+        _PRED_NORM.setdefault(_ri_canon(k), v)
+
+
+def _pred_ri(name):
+    if not name:
+        return None
+    _load_pred()
+    return _PRED.get(name.lower().strip()) or _PRED_NORM.get(_ri_canon(name))
+
+
 def _fit_ri_transform(integrated_peaks, identification_results, rmf_min=850):
     """Self-calibrating per-sample: fit literatureRI = a*measuredRI + b from this
     sample's own confident top-1 hits (strong MS + has literature RI), so RI_Check
@@ -91,18 +119,28 @@ def _fit_ri_transform(integrated_peaks, identification_results, rmf_min=850):
 
 def _ri_check(meas_ri, top_name, transform):
     """RI corroboration of the top-1 ID against the per-sample transform.
-    OK = RI agrees; suspect = RI contradicts; noRI = no literature value;
-    noCal = couldn't calibrate this sample (too few anchors)."""
+    OK / suspect      = vs LITERATURE RI (strong);
+    OK-pred / suspect-pred = vs CNN-PREDICTED RI, last resort (weak, looser tol);
+    noRI = no literature or predicted value; noCal = couldn't calibrate."""
     from config import RI_QC_TOL
     if not meas_ri or not top_name:
         return ''
-    lit = _lit_ri(top_name)
-    if lit is None:
-        return 'noRI'
     if transform is None:
         return 'noCal'
     a, b = transform
-    return 'OK' if abs(lit - (a * meas_ri + b)) <= RI_QC_TOL else 'suspect'
+    expected = a * meas_ri + b
+    lit = _lit_ri(top_name)
+    if lit is not None:
+        return 'OK' if abs(lit - expected) <= RI_QC_TOL else 'suspect'
+    try:
+        from config import RI_QC_USE_PREDICTED, RI_QC_PRED_TOL
+    except ImportError:
+        RI_QC_USE_PREDICTED = False
+    if RI_QC_USE_PREDICTED:
+        pred = _pred_ri(top_name)
+        if pred is not None:
+            return 'OK-pred' if abs(pred - expected) <= RI_QC_PRED_TOL else 'suspect-pred'
+    return 'noRI'
 
 
 # ---- Contaminant patterns ----
@@ -342,9 +380,12 @@ def export_to_excel(results_df, output_path, calibration_data=None):
     summary_df = pd.DataFrame({
         '项目': ['峰总数', '可信免审(绿+RI双证据确认)', '★待复核(看"待复核"表)',
                  f'微量峰(<{_AREA_FLOOR}%,免复核)', '污染物(红,可跳过)', '低置信(灰,信号弱,可略看)',
-                 '— RI核对OK', '— RI核对可疑', '— 无文献RI可核对'],
+                 '— RI核对OK(文献)', '— RI核对可疑(文献)',
+                 '— RI核对OK(预测,弱)', '— RI可疑(预测,弱)', '— 无任何RI可核对'],
         '数量': [n_total, n_trust, n_review, n_trace, n_contam, n_low,
-                 int(rc.get('OK', 0)), int(rc.get('suspect', 0)), int(rc.get('noRI', 0))],
+                 int(rc.get('OK', 0)), int(rc.get('suspect', 0)),
+                 int(rc.get('OK-pred', 0)), int(rc.get('suspect-pred', 0)),
+                 int(rc.get('noRI', 0))],
     })
 
     with pd.ExcelWriter(output_path, engine='openpyxl') as writer:

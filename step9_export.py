@@ -299,6 +299,7 @@ def compile_results(sample_name, integrated_peaks, identification_results,
                 break
 
         # Top-N candidates as sub-rows
+        _mri = peak.get('ri_measured')
         for j, m in enumerate(matches[:TOP_N_CANDIDATES]):
             row = dict(base)
             row['Rank'] = j + 1
@@ -306,9 +307,16 @@ def compile_results(sample_name, integrated_peaks, identification_results,
             row['CAS'] = m.get('cas', '')
             row['FMF'] = m.get('fmf', 0)
             row['RMF'] = m.get('rmf', 0)
-            row['RI_WAX'] = m.get('ri_wax', '') if m.get('ri_wax') is not None else ''
+            # RI_WAX / RI_Diff use the SAME normalized literature lookup + the
+            # per-sample calibration transform as RI_Check, so the three columns
+            # never contradict (was: engine's exact-name lookup + raw diff).
+            _lw = _lit_ri(m.get('name', ''))
+            row['RI_WAX'] = _lw if _lw is not None else ''
             row['RI_DB5'] = m.get('ri_db5', '') if m.get('ri_db5') is not None else ''
-            row['RI_Diff'] = m.get('ri_diff', '') if m.get('ri_diff') is not None else ''
+            if _lw is not None and _ri_tx and _mri:
+                row['RI_Diff'] = int(round(_lw - (_ri_tx[0] * _mri + _ri_tx[1])))
+            else:
+                row['RI_Diff'] = ''
             row['Source'] = m.get('source', '')
             row['Coelution'] = 'Y' if m.get('coelution_flag') else ''
             row['Food_In_Top5'] = 'Y' if food_in_top5 else ''

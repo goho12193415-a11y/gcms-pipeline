@@ -179,14 +179,18 @@ class GCMSApp:
         self.pb.stop()
         if result and result.get('output_file'):
             o = result['output_file']
-            self.st.set('Done: ' + o)
+            outs = result.get('output_files', [o])
+            self.st.set('Done: ' + str(len(outs)) + ' report(s) in ' + str(Path(o).parent))
             n = result.get('processed', '?')
             t = result.get('total', '?')
             print('\nDone! ' + str(n) + '/' + str(t) + ' samples')
-            print('Output: ' + o)
+            print('每个样品生成一个独立报告 (' + str(len(outs)) + ' 个 Excel):')
+            for f in outs:
+                print('  Output: ' + f)
             print('Excel sheets: 汇总 (summary) -> 待复核 (review checklist) -> Results')
             if messagebox.askyesno('Complete',
-                                   'Done. ' + str(n) + '/' + str(t) + ' samples.\n\n'
+                                   'Done. ' + str(n) + '/' + str(t) + ' samples → '
+                                   + str(len(outs)) + ' 个独立报告(每样品一个).\n\n'
                                    'Excel: 汇总 → 待复核(只看要审的) → Results\n\nOpen output folder?'):
                 os.startfile(str(Path(o).parent))
         else:

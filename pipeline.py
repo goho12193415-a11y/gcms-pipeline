@@ -347,8 +347,11 @@ def run_gcms_pipeline(raw_files: list = None, mzml_files: list = None,
         if result['dataframe'] is not None:
             all_results[result['sample_name']] = result['dataframe']
 
-    # ---- Layer 9: Cross-sample alignment ----
-    if len(all_results) > 1:
+    # ---- Layer 9: Cross-sample RT alignment (replicates only; opt-in) ----
+    # OFF by default: aligning independent samples would overwrite each sample's
+    # real retention time with the first sample's. Enable (cfg['cross_align'])
+    # only when the inputs are true replicates of the same sample.
+    if cfg.get('cross_align', False) and len(all_results) > 1:
         print(f"\n[L9] RT alignment across {len(all_results)} samples...")
         ref_name = list(all_results.keys())[0]
         ref_peaks = [{'apex_rt': r['RT_min']}
@@ -378,19 +381,20 @@ def run_gcms_pipeline(raw_files: list = None, mzml_files: list = None,
     for w in qc.get('warnings', []):
         print(f"       [WARN] {w}")
 
-    # ---- Export ----
-    if all_results:
-        combined = pd.concat(all_results.values(), ignore_index=True)
-        # Use fixed filename based on first sample name (overwrites previous runs)
-        first_sample = list(all_results.keys())[0] if all_results else "results"
-        xlsx = str(output_dir / f"{first_sample}.xlsx")
-        export_to_excel(combined, xlsx)
-    else:
-        xlsx = None
+    # ---- Export: one Excel per sample (each named after its own sample) ----
+    # Independent samples must NOT be merged into a single file named after the
+    # first one; every input file gets its own report.
+    output_files = []
+    for sname, df in all_results.items():
+        xf = str(output_dir / f"{sname}.xlsx")
+        export_to_excel(df, xf)
+        output_files.append(xf)
+    xlsx = output_files[0] if output_files else None
 
     return {
         'results': all_results, 'qc_report': qc,
         'output_file': xlsx,
+        'output_files': output_files,
         'total': len(mzml_files), 'processed': len(all_results)
     }
 
@@ -445,6 +449,6 @@ if __name__ == "__main__":
 
     print(f"\n{'='*55}")
     print(f"  Pipeline complete: {result['processed']}/{result['total']} samples")
-    if result['output_file']:
-        print(f"  Output: {result['output_file']}")
+    for _of in result.get('output_files', []):
+        print(f"  Output: {_of}")
     print(f"{'='*55}")

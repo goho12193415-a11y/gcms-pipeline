@@ -39,16 +39,16 @@ python pipeline.py --files sample.qgd --standard alkanes.qgd --nist --solvent-de
   （OK/suspect/noRI/noCal，MS+RI 双证据核对）、`Source`（replib 标记）、
   审核状态（绿/黄/红/灰）、人工确认列
 
-## 性能（跨仪器验证）
+## 定位与验证
 
-- **Thermo**（海带挥发物，对照 49 个人工鉴定，`eval/score.py`）：top-1 41%、top-5 47%、top-8 53%。
-- **岛津 .qgd**（对照 GCMSsolution 结果，61 峰）：top-1 50%、top-5 72%。
-- 这是"与厂商/人工结果的一致度"，非绝对准确率（双方都是 NIST 搜索结果）；
-  剩余分歧主要是 EI 物理极限（支链烷烃同分异构体）+ 弱峰 + 厂商低置信标注。
-  详见《项目技术档案.md》，回归守卫见 `eval/regression.py`。
-- 想要**绝对准确率**：跑一个成分已知的标准品，用 `eval/truth_check.py`
-  （`--candidates <样品>_candidates.json --truth <清单>`）测 top-1/5/8 真实命中率。
-  真值独立于人工与管道，是唯一真正的准确率数字。
+本工具是**辅助**手段，不替代人工鉴定与标准品确认。它的价值在于自动分级审核——
+把"逐个翻几百个峰"压缩到"只看几十个关键峰"（见下方"输出"）。
+
+关于"准确率"：曾用海带样品对照人工鉴定、用 `.qgd` 样品对照 GCMSsolution 做过一致度
+比对，但那**只是一致度、不是准确率**——人工/厂商结果本身也来自 NIST 搜索的 top 选择、
+并不可靠，两组结果互比无法作为正确率依据。要得到**真正的准确率**，需用成分已知的标准品
+跑 `eval/truth_check.py`（真值独立于人工与管道）。历史一致度数据与分析见《项目技术档案.md》，
+回归守卫见 `eval/regression.py`。
 
 ## 系统要求
 

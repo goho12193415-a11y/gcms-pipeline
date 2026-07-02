@@ -30,6 +30,8 @@ thermo_lib/
 # Matyushin 2021 RI-prediction model (Java/Maven) + legacy Lazarus GUI.
 # Kept locally (and in _thirdparty_backup/) but never tracked/redistributed.
 _thirdparty_backup/
+# Benchmark cache — MassBank release + PubChem/NIST-derived data (do not commit)
+eval/_bench_cache/
 *.java
 *.pas
 *.lfm

@@ -46,9 +46,15 @@ python pipeline.py --files sample.qgd --standard alkanes.qgd --nist --solvent-de
 
 关于"准确率"：曾用海带样品对照人工鉴定、用 `.qgd` 样品对照 GCMSsolution 做过一致度
 比对，但那**只是一致度、不是准确率**——人工/厂商结果本身也来自 NIST 搜索的 top 选择、
-并不可靠，两组结果互比无法作为正确率依据。要得到**真正的准确率**，需用成分已知的标准品
-跑 `eval/truth_check.py`（真值独立于人工与管道）。历史一致度数据与分析见《项目技术档案.md》，
-回归守卫见 `eval/regression.py`。
+并不可靠。历史一致度数据见《项目技术档案.md》，回归守卫见 `eval/regression.py`。
+
+**独立验证（结构核对，MS-only）** — `eval/bench_massbank.py`：把 MassBank 独立采集的
+EI 库谱丢进 NIST 搜索、按 CAS/InChIKey **结构**判定命中（非名字）。类挥发物子集
+（未衍生化、MW≤200，n=300）：top-1≈60%、top-5≈70%；拆开看 **可检索率 71%**，而
+**"库里确有该物"时排序 top-1≈89%、top-5≈100%** —— 即匹配引擎已接近极限，整体天花板是
+**库覆盖 + EI 同分异构歧义**，非算法。注：库谱比真实峰干净（偏乐观），且未用 RI；
+真实的 MS+RI 双证据在异构体上更强。想要贴合自己样品的绝对准确率，用成分已知的标准品跑
+`eval/truth_check.py`。
 
 ## 系统要求
 

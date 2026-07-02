@@ -25,3 +25,13 @@ thermo_lib/
 
 # ---- Source-material archives (may contain NIST-derived data) ----
 *.zip
+
+# ---- Third-party code — NOT ours, do not publish (license/attribution) ----
+# Matyushin 2021 RI-prediction model (Java/Maven) + legacy Lazarus GUI.
+# Kept locally (and in _thirdparty_backup/) but never tracked/redistributed.
+_thirdparty_backup/
+*.java
+*.pas
+*.lfm
+*.lpr
+pom.xml

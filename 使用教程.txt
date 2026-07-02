@@ -135,6 +135,15 @@
 5. RI 数据库来源：NIST Standard Reference Database（本机解析，约 16.6K DB-WAX
    + 53K DB-5）。实测 RI 标尺由 --standard 指定的正构烷烃标品自动建立。
 
+6. 测"真实准确率"（可选，推荐）：上面的一致度是"与人工比"，不是准确率。
+   想要绝对准确率，跑一个"成分已知的标准混标"（同柱同方法），然后：
+     (1) python pipeline.py --files 标准品.raw --standard 烷烃标品.raw --nist
+     (2) 列一份真值清单 truth.csv（每行 "RT,化合物名"，RT 可省），再打分：
+         python eval/truth_check.py --candidates output/标准品_candidates.json \
+                                    --truth truth.csv
+   输出 top-1/5/8 的绝对准确率 + 逐条命中/漏检。因真值独立于人工与管道，
+   这是唯一真正的准确率数字。
+
 八、命令行模式
 -------------
 除图形界面外，也可通过命令行运行：

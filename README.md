@@ -56,6 +56,18 @@ python pipeline.py --files sample.qgd --standard alkanes.qgd --nist --solvent-de
 - NIST 质谱库
 - Windows 操作系统
 
+## 在自己电脑上复现
+
+本项目为作者自用而建，`config.py` / `nist_engine.py` / `step1_parse.py` 等文件中的
+库路径、DLL 路径是作者本机的绝对路径。若要在自己的电脑上复现，需要：
+
+1. 安装依赖：`pip install -r requirements.txt`（Python 3.11+，Windows）
+2. 自备 NIST 质谱库（版权原因不随仓库分发），并把上述文件里的 mainlib / replib、
+   ThermoRawFileParser DLL 等路径改成你本机的实际路径
+3. 原生读 Thermo `.RAW` 需 `thermo_lib`（RawFileReader.dll，同样不随仓库分发）
+
+如果你真的想在自己电脑上复现这个项目，遇到问题欢迎联系：**g0ho@qq.com**
+
 ## 许可证
 
 MIT License · Copyright (c) 2026 go ho

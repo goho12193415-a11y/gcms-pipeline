@@ -18,99 +18,174 @@ except Exception as e:
     log_error(f'Import error: {e}\n{traceback.format_exc()}')
     raise
 
+# ---- palette (matches the project's teal/ink identity) ----
+BG   = '#eef2f5'   # page
+CARD = '#ffffff'   # card surface
+INK  = '#14293d'   # primary text
+MUT  = '#5f7180'   # secondary text
+AC   = '#0e7c66'   # accent (teal)
+ACH  = '#0b6353'   # accent hover
+ACD  = '#9cbcb2'   # accent disabled
+LINE = '#dde5ea'   # hairline border
+CON_BG = '#10202b'  # console bg
+CON_FG = '#cbd8e0'  # console fg
+UIFONT = 'Microsoft YaHei UI'
+MONO = 'Consolas'
+
+
 class GCMSApp:
     def __init__(self, root):
         self.root = root
-        self.root.title('GC-MS Auto-Processing v2.1')
-        self.root.geometry('680x600')
-        self.root.resizable(True, True)
-        bg = '#f5f5f5'
-        ac = '#2F5496'
-        self.root.configure(bg=bg)
-        tf = tk.Frame(root, bg=ac, height=60)
-        tf.pack(fill='x')
-        tf.pack_propagate(False)
-        tk.Label(tf, text='GC-MS Auto-Processing System v2.1',
-                font=('Segoe UI', 16, 'bold'), fg='white', bg=ac).pack(pady=(10, 0))
-        tk.Label(tf, text='Copyright (c) 2026 go ho',
-                font=('Segoe UI', 8), fg='#b0c4de', bg=ac).pack()
+        self.root.title('GC-MS 自动鉴定分析工具')
+        self.root.geometry('740x800')
+        self.root.minsize(700, 740)
+        self.root.configure(bg=BG)
+        self._setup_style()
 
-        ff = tk.LabelFrame(root, text='Input Files', font=('Segoe UI', 10, 'bold'),
-                           bg=bg, padx=10, pady=10)
-        ff.pack(fill='x', padx=20, pady=(10, 8))
-        self.lb = tk.Listbox(ff, height=4, font=('Consolas', 9))
-        self.lb.pack(fill='x', pady=(0, 5))
-        bf = tk.Frame(ff, bg=bg)
+        wrap = tk.Frame(root, bg=BG)
+        wrap.pack(fill='both', expand=True, padx=24, pady=(20, 16))
+
+        # ---- header ----
+        head = tk.Frame(wrap, bg=BG)
+        head.pack(fill='x')
+        bar = tk.Frame(head, bg=AC, width=5, height=46)
+        bar.pack(side='left', padx=(0, 14)); bar.pack_propagate(False)
+        htxt = tk.Frame(head, bg=BG)
+        htxt.pack(side='left', anchor='w')
+        tk.Label(htxt, text='GC-MS 自动鉴定分析工具', bg=BG, fg=INK,
+                 font=(UIFONT, 17, 'bold')).pack(anchor='w')
+        tk.Label(htxt, text='原始数据 → 峰检测 · NIST 搜索 · RI 标定 · 分级审核 Excel',
+                 bg=BG, fg=MUT, font=(UIFONT, 9)).pack(anchor='w', pady=(2, 0))
+
+        # ---- input files card ----
+        self._section(wrap, '输入样品')
+        ff = self._card(wrap)
+        self.lb = tk.Listbox(ff, height=4, font=(MONO, 9), bd=0, relief='flat',
+                             bg='#f7fafb', fg=INK, highlightthickness=1,
+                             highlightbackground=LINE, highlightcolor=AC,
+                             selectbackground='#d7ede6', selectforeground=INK,
+                             activestyle='none')
+        self.lb.pack(fill='x', pady=(0, 10), ipady=3)
+        bf = tk.Frame(ff, bg=CARD)
         bf.pack(fill='x')
-        tk.Button(bf, text='+ Add samples (.RAW / .mzML / .qgd)', command=self.add_sample,
-                 bg='#4a90d9', fg='white', font=('Segoe UI', 9),
-                 padx=10).pack(side='left', padx=(0, 5))
-        tk.Button(bf, text='Clear', command=self.clear,
-                 bg='#dc3545', fg='white', font=('Segoe UI', 9),
-                 padx=10).pack(side='left')
+        ttk.Button(bf, text='＋  添加样品  (.RAW / .mzML / .qgd)', style='Accent.TButton',
+                   command=self.add_sample).pack(side='left')
+        ttk.Button(bf, text='清空', style='Ghost.TButton',
+                   command=self.clear).pack(side='left', padx=(8, 0))
 
-        sf = tk.LabelFrame(root, text='Settings', font=('Segoe UI', 10, 'bold'),
-                           bg=bg, padx=10, pady=10)
-        sf.pack(fill='x', padx=20, pady=(0, 8))
-        r1 = tk.Frame(sf, bg=bg)
-        r1.pack(fill='x', pady=3)
-        tk.Label(r1, text='Min S/N:', bg=bg, width=10).pack(side='left')
+        # ---- settings card ----
+        self._section(wrap, '参数设置')
+        sf = self._card(wrap)
+
+        r1 = tk.Frame(sf, bg=CARD); r1.pack(fill='x', pady=(0, 8))
+        self._field_label(r1, '最低信噪比')
         self.sn = tk.StringVar(value='10')
-        tk.Entry(r1, textvariable=self.sn, width=8).pack(side='left', padx=(0, 25))
-        tk.Label(r1, text='Min RMF:', bg=bg, width=10).pack(side='left')
+        ttk.Entry(r1, textvariable=self.sn, width=7, style='F.TEntry').pack(side='left', padx=(0, 22))
+        self._field_label(r1, '最低匹配因子')
         self.rmf = tk.StringVar(value='700')
-        tk.Entry(r1, textvariable=self.rmf, width=8).pack(side='left', padx=(0, 25))
-        tk.Label(r1, text='Solvent delay (min):', bg=bg).pack(side='left')
+        ttk.Entry(r1, textvariable=self.rmf, width=7, style='F.TEntry').pack(side='left', padx=(0, 22))
+        self._field_label(r1, '溶剂延迟 (min)')
         self.sd = tk.StringVar(value='4.0')
-        tk.Entry(r1, textvariable=self.sd, width=6).pack(side='left')
-        rs = tk.Frame(sf, bg=bg)
-        rs.pack(fill='x', pady=3)
-        tk.Label(rs, text='RI standard:', bg=bg, width=10).pack(side='left')
-        self.std = tk.StringVar(value='')
-        tk.Entry(rs, textvariable=self.std, width=42).pack(side='left', padx=(0, 5))
-        tk.Button(rs, text='Browse', command=self.browse_std, bg='#e0e0e0', padx=8).pack(side='left')
-        tk.Button(rs, text='X', command=lambda: self.std.set(''), bg='#e0e0e0', padx=4).pack(side='left', padx=(4, 0))
-        r2 = tk.Frame(sf, bg=bg)
-        r2.pack(fill='x', pady=3)
-        tk.Label(r2, text='Output:', bg=bg, width=10).pack(side='left')
-        self.out = tk.StringVar(value=str(SCRIPT_DIR / 'output'))
-        tk.Entry(r2, textvariable=self.out, width=42).pack(side='left', padx=(0, 5))
-        tk.Button(r2, text='Browse', command=self.browse,
-                 bg='#e0e0e0', padx=8).pack(side='left')
-        r3 = tk.Frame(sf, bg=bg)
-        r3.pack(fill='x', pady=5)
-        self.nist = tk.BooleanVar(value=True)
-        tk.Checkbutton(r3, text='Use NIST engine (recommended)',
-                      variable=self.nist, bg=bg).pack(side='left')
-        self.dec = tk.BooleanVar(value=False)
-        tk.Checkbutton(r3, text='Enable deconvolution',
-                      variable=self.dec, bg=bg).pack(side='left', padx=(20, 0))
+        ttk.Entry(r1, textvariable=self.sd, width=7, style='F.TEntry').pack(side='left')
 
-        self.btn = tk.Button(root, text='START PROCESSING', command=self.run,
-                              bg=ac, fg='white', font=('Segoe UI', 13, 'bold'),
-                              padx=40, pady=12)
-        self.btn.pack(pady=(8, 5))
-        self.st = tk.StringVar(value='Ready. Add files and click START.')
-        tk.Label(root, textvariable=self.st, font=('Segoe UI', 9),
-                fg='#666', bg=bg).pack(pady=(0, 3))
-        self.pb = ttk.Progressbar(root, mode='indeterminate', length=450)
-        self.pb.pack(pady=(0, 8))
-        self.ot = tk.Text(root, height=8, font=('Consolas', 8),
-                          bg='#1e1e1e', fg='#d4d4d4', state='disabled')
-        self.ot.pack(fill='both', expand=True, padx=20, pady=(0, 5))
-        tk.Label(root, text='Copyright (c) 2026 go ho',
-                font=('Segoe UI', 7), fg='#aaa', bg=bg).pack(pady=(0, 8))
+        rs = tk.Frame(sf, bg=CARD); rs.pack(fill='x', pady=8)
+        self._field_label(rs, 'RI 标品', w=11)
+        self.std = tk.StringVar(value='')
+        ttk.Entry(rs, textvariable=self.std, style='F.TEntry').pack(side='left', fill='x', expand=True, padx=(0, 8))
+        ttk.Button(rs, text='浏览', style='Ghost.TButton', command=self.browse_std).pack(side='left')
+        ttk.Button(rs, text='✕', style='Ghost.TButton', width=3,
+                   command=lambda: self.std.set('')).pack(side='left', padx=(6, 0))
+
+        r2 = tk.Frame(sf, bg=CARD); r2.pack(fill='x', pady=8)
+        self._field_label(r2, '输出目录', w=11)
+        self.out = tk.StringVar(value=str(SCRIPT_DIR / 'output'))
+        ttk.Entry(r2, textvariable=self.out, style='F.TEntry').pack(side='left', fill='x', expand=True, padx=(0, 8))
+        ttk.Button(r2, text='浏览', style='Ghost.TButton', command=self.browse).pack(side='left')
+
+        r3 = tk.Frame(sf, bg=CARD); r3.pack(fill='x', pady=(8, 0))
+        self.nist = tk.BooleanVar(value=True)
+        ttk.Checkbutton(r3, text='使用 NIST 官方引擎（推荐）', variable=self.nist,
+                        style='Card.TCheckbutton').pack(side='left')
+        self.dec = tk.BooleanVar(value=False)
+        ttk.Checkbutton(r3, text='启用解卷积', variable=self.dec,
+                        style='Card.TCheckbutton').pack(side='left', padx=(24, 0))
+
+        # ---- run button ----
+        self.btn = ttk.Button(wrap, text='开始处理', style='Start.TButton', command=self.run)
+        self.btn.pack(pady=(16, 8))
+
+        self.st = tk.StringVar(value='就绪 · 添加样品后点击「开始处理」')
+        tk.Label(wrap, textvariable=self.st, font=(UIFONT, 9), fg=MUT, bg=BG).pack()
+        self.pb = ttk.Progressbar(wrap, mode='indeterminate', length=460, style='Teal.Horizontal.TProgressbar')
+        self.pb.pack(pady=(6, 10))
+
+        # ---- console ----
+        self.ot = tk.Text(wrap, height=8, font=(MONO, 8), bd=0, relief='flat',
+                          bg=CON_BG, fg=CON_FG, insertbackground=CON_FG,
+                          highlightthickness=1, highlightbackground='#22323e',
+                          padx=12, pady=10, state='disabled')
+        self.ot.pack(fill='both', expand=True)
+        tk.Label(wrap, text='Copyright (c) 2026 go ho', font=(UIFONT, 7),
+                 fg='#aab6bf', bg=BG).pack(pady=(8, 0))
+
         sys.stdout = TextRedirector(self.ot)
-        self.log('GC-MS Auto-Processing System v2.1')
+        self.log('GC-MS 自动鉴定分析工具')
         self.log('Copyright (c) 2026 go ho')
-        self.log('Ready.')
+        self.log('就绪。')
+
+    # ---------- style / layout helpers ----------
+    def _setup_style(self):
+        s = ttk.Style()
+        try:
+            s.theme_use('clam')
+        except tk.TclError:
+            pass
+        s.configure('Accent.TButton', background=AC, foreground='white',
+                    font=(UIFONT, 10), borderwidth=0, relief='flat', padding=(16, 9))
+        s.map('Accent.TButton', background=[('active', ACH), ('pressed', ACH)],
+              foreground=[('disabled', '#eef2f5')])
+        s.configure('Start.TButton', background=AC, foreground='white',
+                    font=(UIFONT, 13, 'bold'), borderwidth=0, relief='flat', padding=(46, 13))
+        s.map('Start.TButton', background=[('active', ACH), ('pressed', ACH), ('disabled', ACD)])
+        s.configure('Ghost.TButton', background=BG, foreground=INK, font=(UIFONT, 10),
+                    borderwidth=1, relief='flat', padding=(14, 8))
+        s.map('Ghost.TButton', background=[('active', '#e2e8ec')],
+              bordercolor=[('!active', LINE), ('active', AC)])
+        s.configure('F.TEntry', fieldbackground='white', bordercolor=LINE,
+                    lightcolor=LINE, darkcolor=LINE, borderwidth=1, padding=6, foreground=INK)
+        s.map('F.TEntry', bordercolor=[('focus', AC)], lightcolor=[('focus', AC)])
+        s.configure('Card.TCheckbutton', background=CARD, foreground=INK, font=(UIFONT, 10))
+        s.map('Card.TCheckbutton', background=[('active', CARD)],
+              indicatorcolor=[('selected', AC), ('!selected', 'white')])
+        s.configure('Teal.Horizontal.TProgressbar', background=AC, troughcolor='#dde5ea',
+                    borderwidth=0, thickness=6)
+
+    def _section(self, parent, text):
+        tk.Label(parent, text=text, bg=BG, fg=AC,
+                 font=(UIFONT, 10, 'bold')).pack(anchor='w', pady=(16, 6))
+
+    def _card(self, parent):
+        c = tk.Frame(parent, bg=CARD, highlightthickness=1,
+                     highlightbackground=LINE, highlightcolor=LINE)
+        c.pack(fill='x')
+        inner = tk.Frame(c, bg=CARD)
+        inner.pack(fill='x', padx=16, pady=14)
+        return inner
+
+    def _field_label(self, parent, text, w=None):
+        lbl = tk.Label(parent, text=text, bg=CARD, fg=MUT, font=(UIFONT, 10),
+                       anchor='w')
+        if w:
+            lbl.config(width=w)
+        lbl.pack(side='left', padx=(0, 10))
 
     def log(self, msg):
         print(msg)
 
+    # ---------- actions (unchanged logic) ----------
     def add_sample(self):
         files = filedialog.askopenfilenames(
-            title='Select sample files (Thermo .RAW / .mzML / Shimadzu .qgd)',
+            title='选择样品文件 (Thermo .RAW / .mzML / 岛津 .qgd)',
             filetypes=[('GC-MS data', '*.raw *.RAW *.mzML *.mzml *.qgd *.QGD'),
                        ('All', '*.*')])
         for f in files:
@@ -121,13 +196,13 @@ class GCMSApp:
         self.lb.delete(0, tk.END)
 
     def browse(self):
-        d = filedialog.askdirectory(title='Select output folder')
+        d = filedialog.askdirectory(title='选择输出目录')
         if d:
             self.out.set(d)
 
     def browse_std(self):
         f = filedialog.askopenfilename(
-            title='Select n-alkane standard for RI calibration (.qgd/.RAW/.mzML)',
+            title='选择正构烷烃 RI 标品 (.qgd / .RAW / .mzML)',
             filetypes=[('GC-MS data', '*.raw *.RAW *.mzML *.mzml *.qgd *.QGD'),
                        ('All', '*.*')])
         if f:
@@ -136,14 +211,14 @@ class GCMSApp:
     def run(self):
         files = list(self.lb.get(0, tk.END))
         if not files:
-            messagebox.showwarning('No Files', 'Please add sample files first (.RAW/.mzML/.qgd).')
+            messagebox.showwarning('未选择文件', '请先添加样品文件（.RAW / .mzML / .qgd）。')
             return
         # .RAW -> native Thermo reader; .mzML/.qgd -> load_sample (dispatched by extension)
         raw = [f for f in files if f.lower().endswith('.raw')]
         other = [f for f in files if not f.lower().endswith('.raw')]
-        self.btn.config(state='disabled', text='Running...')
+        self.btn.config(state='disabled', text='处理中…')
         self.pb.start(10)
-        self.st.set('Processing ' + str(len(files)) + ' sample(s)...')
+        self.st.set('正在处理 ' + str(len(files)) + ' 个样品…')
         threading.Thread(target=self._run, args=(raw, other), daemon=True).start()
 
     def _run(self, raw, mzml):
@@ -175,12 +250,12 @@ class GCMSApp:
             self.root.after(0, self._err, str(e) + '\n' + traceback.format_exc())
 
     def _done(self, result):
-        self.btn.config(state='normal', text='START PROCESSING')
+        self.btn.config(state='normal', text='开始处理')
         self.pb.stop()
         if result and result.get('output_file'):
             o = result['output_file']
             outs = result.get('output_files', [o])
-            self.st.set('Done: ' + str(len(outs)) + ' report(s) in ' + str(Path(o).parent))
+            self.st.set('完成 · 生成 ' + str(len(outs)) + ' 个报告 · ' + str(Path(o).parent))
             n = result.get('processed', '?')
             t = result.get('total', '?')
             print('\nDone! ' + str(n) + '/' + str(t) + ' samples')
@@ -188,20 +263,20 @@ class GCMSApp:
             for f in outs:
                 print('  Output: ' + f)
             print('Excel sheets: 汇总 (summary) -> 待复核 (review checklist) -> Results')
-            if messagebox.askyesno('Complete',
-                                   'Done. ' + str(n) + '/' + str(t) + ' samples → '
-                                   + str(len(outs)) + ' 个独立报告(每样品一个).\n\n'
-                                   'Excel: 汇总 → 待复核(只看要审的) → Results\n\nOpen output folder?'):
+            if messagebox.askyesno('处理完成',
+                                   '完成。' + str(n) + '/' + str(t) + ' 个样品 → '
+                                   + str(len(outs)) + ' 个独立报告（每样品一个）。\n\n'
+                                   'Excel：汇总 → 待复核（只看要审的）→ Results\n\n打开输出文件夹？'):
                 os.startfile(str(Path(o).parent))
         else:
-            self.st.set('Done (no output)')
+            self.st.set('完成（无输出）')
 
     def _err(self, msg):
-        self.btn.config(state='normal', text='START PROCESSING')
+        self.btn.config(state='normal', text='开始处理')
         self.pb.stop()
-        self.st.set('Error!')
+        self.st.set('出错了！')
         print('\n[ERROR]\n' + msg)
-        messagebox.showerror('Error', msg[:500])
+        messagebox.showerror('错误', msg[:500])
 
 
 class TextRedirector:

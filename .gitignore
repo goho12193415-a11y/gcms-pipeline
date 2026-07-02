@@ -38,3 +38,4 @@ _thirdparty_backup/
 *.ico
 pom*.xml
 compile.sh
+information.pdf

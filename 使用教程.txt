@@ -13,9 +13,10 @@
 
 二、安装准备
 -----------
-1. 确保已安装 Python 3.11+（含以下包）：
-   pip install numpy scipy pandas openpyxl pymzml pyms-nist-search olefile pythonnet
-   （olefile 读岛津 .qgd；pythonnet 原生读 Thermo .RAW）
+1. 确保已安装 Python 3.11+，并安装依赖（版本已锁定，避免日后库升级后跑不动）：
+   pip install -r requirements.txt
+   （亦可手动：numpy scipy pandas openpyxl pymzml pyms-nist-search olefile pythonnet；
+     olefile 读岛津 .qgd；pythonnet 原生读 Thermo .RAW）
 
 2. NIST 质谱库已就位（分发版在 谱库\mainlib\）。
 

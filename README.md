@@ -14,13 +14,13 @@ go ho
 
 核心技术：SNIP 基线校正（向量化实现）、ICIS 峰检测（赛默飞 Genesis 同等逻辑）、空气背景离子剔除（解决低丰度峰被水峰主导的问题）、通过 pyms-nist-search 调用 NIST 官方引擎（mainlib + 复本库 replib）、**按样品 RI 标定**（用本仪器跑的正构烷烃标品自动建立 RT→RI，并对每个鉴定做 MS+RI 双证据核对）。
 
-保留指数（RI）数据库含 46,000 条 DB-5 与 16,000 条 DB-WAX 文献值。
+保留指数（RI）数据库含约 53,000 条 DB-5 与 16,600 条 DB-WAX 文献值。
 
 ## 快速开始
 
 ```bash
-# 安装依赖（olefile 读 .qgd；pythonnet 原生读 .RAW）
-pip install numpy scipy pandas openpyxl pymzml pyms-nist-search olefile pythonnet
+# 安装依赖（版本已锁定；olefile 读 .qgd，pythonnet 原生读 .RAW）
+pip install -r requirements.txt
 
 # 图形界面（推荐）：选样品(.RAW/.mzML/.qgd) + RI 标品 + 溶剂延迟 → START
 双击 软件\启动.bat
@@ -31,7 +31,7 @@ python pipeline.py --files sample.qgd --standard alkanes.qgd --nist --solvent-de
 
 ## 输出
 
-Excel 报告含三张表（按此顺序看最省力）：
+每个样品输出一个独立的 Excel（文件名=样品名，多样品互不合并）。每个 Excel 含三张表（按此顺序看最省力）：
 - **汇总**：峰总数、可信免审、待复核、微量峰、污染物、低置信的数量
 - **待复核**：只列需人工核对的峰（黄色无 RI 佐证 + RI 可疑），按面积排序；
   可信(绿+RI双证据)/微量/污染物/低置信已自动归类，无需逐个翻
@@ -46,6 +46,9 @@ Excel 报告含三张表（按此顺序看最省力）：
 - 这是"与厂商/人工结果的一致度"，非绝对准确率（双方都是 NIST 搜索结果）；
   剩余分歧主要是 EI 物理极限（支链烷烃同分异构体）+ 弱峰 + 厂商低置信标注。
   详见《项目技术档案.md》，回归守卫见 `eval/regression.py`。
+- 想要**绝对准确率**：跑一个成分已知的标准品，用 `eval/truth_check.py`
+  （`--candidates <样品>_candidates.json --truth <清单>`）测 top-1/5/8 真实命中率。
+  真值独立于人工与管道，是唯一真正的准确率数字。
 
 ## 系统要求
 

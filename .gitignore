@@ -34,4 +34,7 @@ _thirdparty_backup/
 *.pas
 *.lfm
 *.lpr
-pom.xml
+*.lpi
+*.ico
+pom*.xml
+compile.sh

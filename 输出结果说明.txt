@@ -7,7 +7,7 @@
 会生成多个 Excel，互不合并。每个文件含三个工作表，按此顺序查看最省力：
   「汇总」→「待复核」→「Results」
 
-支持 Thermo .RAW / .mzML 与岛津 GCMSsolution .qgd 数据。
+支持 Thermo .RAW / .mzML、岛津 GCMSsolution .qgd、安捷伦 MassHunter .D 数据。
 
 
 一、汇总 工作表（先看这张，掌握全局）

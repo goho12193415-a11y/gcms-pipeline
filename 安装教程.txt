@@ -33,9 +33,10 @@
 
 如安装失败，可手动执行：
   Win+R → 输入 cmd → 回车
-  输入：pip install numpy scipy pandas openpyxl pymzml pyms-nist-search olefile pythonnet
+  输入：pip install numpy scipy pandas openpyxl pymzml pyms-nist-search olefile pythonnet rainbow-api
 
-  说明：olefile 用于读取岛津 .qgd 数据；pythonnet 用于原生直读 Thermo .RAW。
+  说明：olefile 用于读取岛津 .qgd；pythonnet 用于原生直读 Thermo .RAW；
+        rainbow-api 用于读取安捷伦 MassHunter .D 数据。
 
 
 四、确认文件夹结构
@@ -54,6 +55,7 @@
       ├── gui.py
       ├── pipeline.py
       ├── qgd_reader.py     ← 岛津 .qgd 读取
+      ├── agilent_reader.py ← 安捷伦 MassHunter .D 读取
       ├── ri_calib.py       ← 保留指数标定
       ├── thermo_lib/       ← 原生读 .RAW 所需的 Thermo DLL（已内置）
       ├── library/          ← RI 数据库
@@ -61,7 +63,8 @@
 
 请勿移动或重命名 "谱库" 和 "软件" 文件夹，否则软件无法找到 NIST 库。
 
-支持的数据格式：Thermo .RAW（原生直读）、.mzML、岛津 GCMSsolution .qgd。
+支持的数据格式：Thermo .RAW（原生直读）、.mzML、岛津 GCMSsolution .qgd、
+安捷伦 MassHunter .D（GC-MS / GC-Q-TOF 文件夹）。
 
 
 五、启动软件

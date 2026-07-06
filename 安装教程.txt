@@ -56,6 +56,7 @@
       ├── pipeline.py
       ├── qgd_reader.py     ← 岛津 .qgd 读取
       ├── agilent_reader.py ← 安捷伦 MassHunter .D 读取
+      ├── is_extract.py     ← 内标定向提取（半定量）
       ├── ri_calib.py       ← 保留指数标定
       ├── thermo_lib/       ← 原生读 .RAW 所需的 Thermo DLL（已内置）
       ├── library/          ← RI 数据库

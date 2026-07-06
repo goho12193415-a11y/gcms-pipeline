@@ -289,6 +289,14 @@ class GCMSApp:
             std = self.std.get().strip()
             if std:
                 cfg['standard_file'] = std
+            if self.is_on.get():                 # internal-standard normalization column
+                try:
+                    cfg['is_ion'] = float(self.is_mz.get())
+                    cfg['is_rt_min'] = float(self.is_rt1.get())
+                    cfg['is_rt_max'] = float(self.is_rt2.get())
+                    cfg['is_name'] = self.is_name.get().strip() or 'IS'
+                except (ValueError, TypeError):
+                    pass
             out_dir = self.out.get() or str(SCRIPT_DIR / 'output')
             result = run_gcms_pipeline(
                 raw_files=raw if raw else None,

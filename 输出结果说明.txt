@@ -36,8 +36,9 @@
   - 微量峰（面积 < 0.05%）→ 噪声/痕量，通常不报
   - 红色污染物、灰色低置信
 
-列：Peak_No、RT_min、Area、Percentage(面积%)、Status、RI_Check、
+列：Peak_No、RT_min、Area、Percentage(面积%)、[Area_rel_IS]、Status、RI_Check、
     Compound_Name、RMF、FMF、RI_WAX、CAS
+    （Area_rel_IS 仅在勾选"内标定向提取"时出现：峰面积/内标面积，半定量归一值）
 
 → 从"翻几百个峰"变成"看这张表里的二十来个关键峰"。
 
@@ -53,6 +54,9 @@
   Area / Height    峰面积 / 峰高
   SN               信噪比
   Percentage       相对含量（面积归一化百分比）
+  Area_rel_IS      峰面积 / 内标峰面积（仅当勾选"内标定向提取"时出现）。这是
+                   半定量归一化值——同一化合物跨样品可直接比较高低，消除进样量
+                   差异。注：半定量（相对），不是绝对浓度；绝对定量仍需标准曲线。
   Status           审核状态（见第四节）
   RI_Check         实测 RI 与文献的核对结果（见第五节）
   User_Confirm     人工确认列（空白，供用户填写）

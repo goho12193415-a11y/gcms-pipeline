@@ -373,8 +373,9 @@ def export_to_excel(results_df, output_path, calibration_data=None):
                         errors='coerce').fillna(1e9)
     n_trace = int((review_mask & (pct < _AREA_FLOOR)).sum())
     need = r1[review_mask & (pct >= _AREA_FLOOR)]
-    rev_cols = [c for c in ['Peak_No', 'RT_min', 'Area', 'Percentage', 'Status',
-                            'RI_Check', 'Compound_Name', 'RMF', 'FMF', 'RI_WAX', 'CAS']
+    rev_cols = [c for c in ['Peak_No', 'RT_min', 'Area', 'Percentage', 'Area_rel_IS',
+                            'Status', 'RI_Check', 'Compound_Name', 'RMF', 'FMF',
+                            'RI_WAX', 'CAS']
                 if c in need.columns]
     review_df = need[rev_cols].sort_values('Area', ascending=False) if not need.empty else need[rev_cols]
 

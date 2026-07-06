@@ -275,6 +275,28 @@ def process_single_sample(mzml_path: str, lib: SpectralLibrary,
 
     # ---- Compile ----
     result_df = compile_results(sample_name, integrated, id_results, quant_results)
+
+    # ---- optional: internal-standard normalization (semi-quant, no calib needed) ----
+    if cfg.get('is_ion') and result_df is not None and 'Area' in result_df.columns:
+        try:
+            from is_extract import eic, integrate_peak
+            rt_arr = np.asarray(data['rt'], float)
+            q = eic(data['scan_list'], float(cfg['is_ion']))
+            pk = integrate_peak(rt_arr, q, float(cfg.get('is_rt_min', 11.8)),
+                                float(cfg.get('is_rt_max', 13.2)))
+            is_area = pk['area'] if pk else 0.0
+            if is_area > 0:
+                result_df['Area_rel_IS'] = (result_df['Area'].astype(float)
+                                            / is_area).round(4)
+                print(f"       [IS] {cfg.get('is_name', 'IS')} area={is_area:.0f} "
+                      f"@RT{pk['rt']:.2f} → added Area_rel_IS (semi-quant)")
+            else:
+                result_df['Area_rel_IS'] = ''
+                print(f"       [IS] {cfg.get('is_name', 'IS')} not found in window "
+                      f"→ Area_rel_IS blank")
+        except Exception as _e:
+            print(f"       [IS] normalization skipped: {_e}")
+
     elapsed = time.time() - t0
     print(f"       Done in {elapsed:.0f}s")
 

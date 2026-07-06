@@ -70,6 +70,8 @@ class GCMSApp:
         bf.pack(fill='x')
         ttk.Button(bf, text='＋  添加样品  (.RAW / .mzML / .qgd)', style='Accent.TButton',
                    command=self.add_sample).pack(side='left')
+        ttk.Button(bf, text='＋  安捷伦 .D 文件夹', style='Accent.TButton',
+                   command=self.add_folder).pack(side='left', padx=(8, 0))
         ttk.Button(bf, text='清空', style='Ghost.TButton',
                    command=self.clear).pack(side='left', padx=(8, 0))
 
@@ -191,6 +193,31 @@ class GCMSApp:
         for f in files:
             if f not in self.lb.get(0, tk.END):
                 self.lb.insert(tk.END, f)
+
+    def add_folder(self):
+        d = filedialog.askdirectory(
+            title='选择安捷伦 .D 文件夹（或含多个 .D 的父文件夹）')
+        if not d:
+            return
+        existing = set(self.lb.get(0, tk.END))
+        # A .D acquisition folder contains AcqData/MSScan.bin.
+        def is_dot_d(p):
+            return p.lower().rstrip('/\\').endswith('.d') and \
+                os.path.isfile(os.path.join(p, 'AcqData', 'MSScan.bin'))
+        if is_dot_d(d):
+            targets = [d]
+        else:                                    # a parent folder: collect all .D inside
+            targets = sorted(os.path.join(d, x) for x in os.listdir(d)
+                             if is_dot_d(os.path.join(d, x)))
+        if not targets:
+            messagebox.showwarning('未找到 .D 数据',
+                                   '该文件夹不是安捷伦 .D，也没有包含任何 .D 样品。')
+            return
+        for t in targets:
+            if t not in existing:
+                self.lb.insert(tk.END, t)
+        if len(targets) > 1:
+            self.st.set('已添加 ' + str(len(targets)) + ' 个 .D 样品')
 
     def clear(self):
         self.lb.delete(0, tk.END)

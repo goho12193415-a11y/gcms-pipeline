@@ -37,8 +37,8 @@ class GCMSApp:
     def __init__(self, root):
         self.root = root
         self.root.title('GC-MS 自动鉴定分析工具')
-        self.root.geometry('740x800')
-        self.root.minsize(700, 740)
+        self.root.geometry('760x880')
+        self.root.minsize(720, 800)
         self.root.configure(bg=BG)
         self._setup_style()
 
@@ -111,6 +111,31 @@ class GCMSApp:
         self.dec = tk.BooleanVar(value=False)
         ttk.Checkbutton(r3, text='启用解卷积', variable=self.dec,
                         style='Card.TCheckbutton').pack(side='left', padx=(24, 0))
+
+        r4 = tk.Frame(sf, bg=CARD); r4.pack(fill='x', pady=(10, 0))
+        self.is_on = tk.BooleanVar(value=False)
+        ttk.Checkbutton(r4, text='内标定向提取', variable=self.is_on,
+                        style='Card.TCheckbutton').pack(side='left', padx=(0, 12))
+        self._field_label(r4, 'm/z')
+        self.is_mz = tk.StringVar(value='45')
+        ttk.Entry(r4, textvariable=self.is_mz, width=5, style='F.TEntry').pack(side='left', padx=(0, 12))
+        self._field_label(r4, 'RT')
+        self.is_rt1 = tk.StringVar(value='11.8')
+        ttk.Entry(r4, textvariable=self.is_rt1, width=5, style='F.TEntry').pack(side='left')
+        tk.Label(r4, text='–', bg=CARD, fg=MUT).pack(side='left', padx=5)
+        self.is_rt2 = tk.StringVar(value='13.2')
+        ttk.Entry(r4, textvariable=self.is_rt2, width=5, style='F.TEntry').pack(side='left', padx=(0, 12))
+        self._field_label(r4, '确认离子')
+        self.is_conf = tk.StringVar(value='55')
+        ttk.Entry(r4, textvariable=self.is_conf, width=5, style='F.TEntry').pack(side='left', padx=(0, 12))
+        self._field_label(r4, '内标名')
+        self.is_name = tk.StringVar(value='2-octanol')
+        ttk.Entry(r4, textvariable=self.is_name, width=11, style='F.TEntry').pack(side='left')
+
+        tk.Label(sf, text='内标定向提取：无需标品，按 m/z + RT 窗口把内标峰积分出来，'
+                          '另存一张各样品内标响应表（用于归一/进样质控）。',
+                 bg=CARD, fg=MUT, font=(UIFONT, 8), anchor='w',
+                 wraplength=640, justify='left').pack(fill='x', pady=(6, 0))
 
         # ---- run button ----
         self.btn = ttk.Button(wrap, text='开始处理', style='Start.TButton', command=self.run)
@@ -271,6 +296,22 @@ class GCMSApp:
                 output_dir=out_dir,
                 config=cfg,
             )
+            # optional: targeted internal-standard extraction (no calib standard needed)
+            if self.is_on.get():
+                try:
+                    from is_extract import extract_internal_standard
+                    nm = (self.is_name.get().strip() or 'IS')
+                    print('\n[内标] 定向提取 ' + nm + ' (m/z ' + self.is_mz.get() + ') …')
+                    df = extract_internal_standard(
+                        list(raw) + list(mzml),
+                        mz=float(self.is_mz.get()),
+                        rt_min=float(self.is_rt1.get()), rt_max=float(self.is_rt2.get()),
+                        confirm=float(self.is_conf.get()), name=nm, log=print)
+                    is_out = os.path.join(out_dir, 'internal_standard_' + nm + '.xlsx')
+                    df.to_excel(is_out, index=False)
+                    print('[内标] 响应表已保存: ' + is_out)
+                except Exception as ie:
+                    print('[内标] 提取失败: ' + str(ie))
             self.root.after(0, self._done, result)
         except Exception as e:
             import traceback

@@ -10,7 +10,7 @@ go ho
 
 ## 简介
 
-本系统用于 GC-MS（气相色谱-质谱联用）数据的全自动处理。**跨仪器支持**：Thermo Fisher `.RAW`（原生直读）、`.mzML`、岛津 GCMSsolution `.qgd`，自动识别格式。自动完成基线校正、色谱峰检测、空气背景离子剔除、NIST 质谱库搜索、保留指数（RI）标定与核对，最终输出分级的 Excel 审核报告。
+本系统用于 GC-MS（气相色谱-质谱联用）数据的全自动处理。**跨仪器支持**：Thermo Fisher `.RAW`（原生直读）、`.mzML`、岛津 GCMSsolution `.qgd`、安捷伦 MassHunter `.D`（GC-MS / GC-Q-TOF），自动识别格式。自动完成基线校正、色谱峰检测、空气背景离子剔除、NIST 质谱库搜索、保留指数（RI）标定与核对，最终输出分级的 Excel 审核报告。
 
 核心技术：SNIP 基线校正（向量化实现）、ICIS 峰检测（赛默飞 Genesis 同等逻辑）、空气背景离子剔除（解决低丰度峰被水峰主导的问题）、通过 pyms-nist-search 调用 NIST 官方引擎（mainlib + 复本库 replib）、**按样品 RI 标定**（用本仪器跑的正构烷烃标品自动建立 RT→RI，并对每个鉴定做 MS+RI 双证据核对）。
 

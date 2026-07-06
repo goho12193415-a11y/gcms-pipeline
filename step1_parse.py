@@ -3,6 +3,7 @@ Step 1: RAW → mzML conversion + data loading
 =============================================
 Uses ThermoRawFileParser for conversion, pymzml for loading.
 """
+import os
 import subprocess
 import numpy as np
 from pathlib import Path
@@ -96,7 +97,10 @@ def load_sample(path: str) -> dict:
     """Load a sample by extension: .RAW read natively (Thermo RawFileReader,
     no conversion), anything else via pymzml. If the native reader's DLLs are
     not available, fall back to RAW->mzML conversion. Same return structure."""
-    low = str(path).lower()
+    low = str(path).lower().rstrip('/\\')
+    if low.endswith('.d') and os.path.isdir(path):   # Agilent MassHunter .D folder
+        from agilent_reader import load_agilent_to_matrix
+        return load_agilent_to_matrix(path)
     if low.endswith('.qgd'):                     # Shimadzu GCMSsolution
         from qgd_reader import load_qgd_to_matrix
         return load_qgd_to_matrix(path)

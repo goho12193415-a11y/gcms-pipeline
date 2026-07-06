@@ -6,7 +6,8 @@
 一、软件简介
 -----------
 本软件用于 GC-MS 数据的全自动处理：输入原始数据，一键生成带分级审核的 Excel
-鉴定报告。跨仪器支持 Thermo .RAW（原生直读）、.mzML、岛津 GCMSsolution .qgd。
+鉴定报告。跨仪器支持 Thermo .RAW（原生直读）、.mzML、岛津 GCMSsolution .qgd、
+安捷伦 MassHunter .D（GC-MS / GC-Q-TOF）。
 内置 NIST 官方质谱搜索引擎、双柱保留指数（RI）数据库和按样品 RI 标定/核对。
 注：报告是辅助工具，与人工/厂商软件的一致度约 top-5 47%~72%（见第七节），
 不能替代人工鉴定与标准品确认。
@@ -168,7 +169,9 @@
     --min-sn      最低信噪比
     --min-rmf     最低匹配因子
 
-  支持仪器格式：Thermo（.RAW 原生直读 / .mzML）、岛津 GCMSsolution（.qgd）。
+  支持仪器格式：Thermo（.RAW 原生直读 / .mzML）、岛津 GCMSsolution（.qgd）、
+  安捷伦 MassHunter（.D 文件夹，GC-MS / GC-Q-TOF）。
+  注：安捷伦 .D 是文件夹，命令行用 --files 指到该 .D 目录即可。
 
 九、保留指数（RI）标定与 RI_Check 列
 -----------------------------------------

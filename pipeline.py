@@ -286,12 +286,14 @@ def process_single_sample(mzml_path: str, lib: SpectralLibrary,
                                 float(cfg.get('is_rt_max', 13.2)))
             is_area = pk['area'] if pk else 0.0
             if is_area > 0:
-                result_df['Area_rel_IS'] = (result_df['Area'].astype(float)
-                                            / is_area).round(4)
+                a = result_df['Area'].astype(float)
+                result_df['Area_rel_IS'] = (a / is_area).round(4)
+                result_df['相对内标%'] = (a / is_area * 100).round(2)   # IS = 100%
                 print(f"       [IS] {cfg.get('is_name', 'IS')} area={is_area:.0f} "
-                      f"@RT{pk['rt']:.2f} → added Area_rel_IS (semi-quant)")
+                      f"@RT{pk['rt']:.2f} → added Area_rel_IS + 相对内标% (semi-quant)")
             else:
                 result_df['Area_rel_IS'] = ''
+                result_df['相对内标%'] = ''
                 print(f"       [IS] {cfg.get('is_name', 'IS')} not found in window "
                       f"→ Area_rel_IS blank")
         except Exception as _e:

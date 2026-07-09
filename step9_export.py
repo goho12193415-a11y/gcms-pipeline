@@ -146,6 +146,7 @@ def _ri_check(meas_ri, top_name, transform):
 # ---- Contaminant patterns ----
 CONTAMINANT_PATTERNS = [
     'silane', 'siloxane', 'dimethylsilanediol', 'silanediol',
+    'sila', 'silyl', 'silox',   # any Si-backbone (trisila…, silyl ethers) = bleed/fiber
     'phthalate', 'phthalic',
     'butylated hydroxytoluene', 'bht',
     'column bleed', 'cyclosiloxane',
@@ -337,6 +338,19 @@ def compile_results(sample_name, integrated_peaks, identification_results,
 
     df = pd.DataFrame(rows)
 
+    # ---- 净相对含量% : area-normalized %, but only over non-contaminant peaks
+    #      (excludes siloxane/plasticizer/column-bleed so the real components'
+    #       share is not diluted by contaminants). Blank for contaminant rows. ----
+    if 'Area' in df.columns and 'Status' in df.columns and not df.empty:
+        a = pd.to_numeric(df['Area'], errors='coerce').fillna(0)
+        clean = df['Status'] != 'CONTAMINANT'
+        total_clean = a[(df['Rank'] == 1) & clean].sum()
+        if total_clean > 0:
+            df['净相对含量%'] = [round(v / total_clean * 100, 3) if c else ''
+                                 for v, c in zip(a, clean)]
+        else:
+            df['净相对含量%'] = ''
+
     # Sort by Area descending (biggest peaks first, most reliable)
     if 'Area' in df.columns and not df.empty:
         df['_sort_area'] = pd.to_numeric(df['Area'], errors='coerce').fillna(0)
@@ -373,9 +387,9 @@ def export_to_excel(results_df, output_path, calibration_data=None):
                         errors='coerce').fillna(1e9)
     n_trace = int((review_mask & (pct < _AREA_FLOOR)).sum())
     need = r1[review_mask & (pct >= _AREA_FLOOR)]
-    rev_cols = [c for c in ['Peak_No', 'RT_min', 'Area', 'Percentage', 'Area_rel_IS',
-                            'Status', 'RI_Check', 'Compound_Name', 'RMF', 'FMF',
-                            'RI_WAX', 'CAS']
+    rev_cols = [c for c in ['Peak_No', 'RT_min', 'Area', 'Percentage', '净相对含量%',
+                            'Area_rel_IS', '相对内标%', 'Status', 'RI_Check',
+                            'Compound_Name', 'RMF', 'FMF', 'RI_WAX', 'CAS']
                 if c in need.columns]
     review_df = need[rev_cols].sort_values('Area', ascending=False) if not need.empty else need[rev_cols]
 

@@ -119,6 +119,11 @@ TOP_N_CANDIDATES = 8
 # they're kept in the full Results sheet but dropped from the 待复核 review
 # checklist (set 0 to review everything). CLI: --review-min-area
 REVIEW_MIN_AREA_PCT = 0.05
+# Co-elution flag: RMF/FMF above this = the spectrum has ions the library
+# compound can't explain (mixed/co-eluting peak). NIST forward/reverse scores
+# sit closer together than the in-memory library's, so 1.3 (not 1.5) is the
+# sensible cut for the NIST path.
+COELUTION_RATIO = 1.3
 
 # ---- Step 10: QC ----
 QC_SAMPLE_PATTERN = "QC"

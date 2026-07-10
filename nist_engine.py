@@ -21,6 +21,11 @@ try:
 except ImportError:
     AIR_IONS = frozenset({17, 18, 28, 32, 40, 44})
 
+try:
+    from config import COELUTION_RATIO as _COELUTION_RATIO
+except ImportError:
+    _COELUTION_RATIO = 1.3
+
 
 def _canon_alkane(name):
     """Canonicalize IUPAC<->common branched-alkane naming to one key.
@@ -245,6 +250,10 @@ class NISTSearchEngine:
                 'fmf': mf, 'rmf': rmf,
                 'ri_wax': ri_wax, 'ri_db5': ri_db5,
                 'ri_diff': ri_delta,
+                # RMF (ignores extra ions) >> FMF (penalises them) means the
+                # spectrum carries ions the library compound can't explain -> a
+                # mixed/co-eluting peak. Threshold from config (NIST scale).
+                'coelution_flag': mf > 0 and (rmf / mf) > _COELUTION_RATIO,
                 'source': 'MS',
                 'combined_score': float(rmf),
                 'rank': i + 1,

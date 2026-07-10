@@ -188,9 +188,36 @@ def process_single_sample(mzml_path: str, lib: SpectralLibrary,
         print("  [L6] NIST MS Search engine + RI re-ranking...")
         from nist_engine import NISTSearchEngine
         nist_engine = NISTSearchEngine()
+        # If deconvolution ran, feed the deconvolved 'pure' spectrum of each
+        # co-eluting peak to NIST instead of its interference-contaminated apex.
+        override = None
+        if deconv_enabled:
+            override = []
+            n_sparse = 0
+            for i in range(len(peaks)):
+                if deconv[i]:
+                    spec = np.asarray(deconv[i][0]['pure_spectrum'], dtype=float)
+                    mx = spec.max() if spec.size else 0.0
+                    # Guard: an over-decomposed (too-sparse) spectrum matches
+                    # trivial small molecules (methyl fluoride…) at spurious high
+                    # RMF. Only trust the deconvolved spectrum if it keeps enough
+                    # significant ions; otherwise fall back to the raw apex.
+                    sig = int((spec > 0.01 * mx).sum()) if mx > 0 else 0
+                    if sig >= cfg.get('deconv_min_ions', 6):
+                        mask = spec > 0
+                        override.append((mz_bins[mask], spec[mask]))
+                    else:
+                        override.append(None)
+                        n_sparse += 1
+                else:
+                    override.append(None)
+            n_dec = sum(1 for o in override if o is not None)
+            print(f"       [deconv→NIST] deconvolved spectra used for {n_dec} peaks; "
+                  f"{n_sparse} too-sparse fell back to raw apex")
         # Use RAW spectrum (proven 29% coverage vs 24% binned)
         id_results = nist_engine.search_peaks_raw(
-            peaks, data['scan_list'], top_n=TOP_N_CANDIDATES, verbose=True
+            peaks, data['scan_list'], top_n=TOP_N_CANDIDATES, verbose=True,
+            override_spectra=override
         )
         # Merge replicate-library candidates (separate process; DLL is single-lib)
         if cfg.get('use_replib', NIST_USE_REPLIB):

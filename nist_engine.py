@@ -261,14 +261,23 @@ class NISTSearchEngine:
 
         return results
 
-    def search_peaks_raw(self, peaks, scan_list, top_n=5, verbose=True):
-        """Batch search + RI re-ranking (Goodner predictions included)."""
+    def search_peaks_raw(self, peaks, scan_list, top_n=5, verbose=True,
+                         override_spectra=None):
+        """Batch search + RI re-ranking (Goodner predictions included).
+
+        override_spectra: optional list (per peak) of (mz_array, int_array) to
+        search INSTEAD of that peak's raw apex spectrum — used to feed
+        deconvolved 'pure' spectra of co-eluting peaks. None entries fall back
+        to the raw apex scan."""
         all_matches = []
         for i, peak in enumerate(peaks):
-            scan = scan_list[peak['apex_idx']]
+            if override_spectra is not None and override_spectra[i] is not None:
+                mz_arr, int_arr = override_spectra[i]
+            else:
+                scan = scan_list[peak['apex_idx']]
+                mz_arr, int_arr = scan['mz'], scan['intensity']
             matches = self.search_raw_spectrum(
-                scan['mz'], scan['intensity'], top_n,
-                measured_ri=peak.get('ri_measured'))
+                mz_arr, int_arr, top_n, measured_ri=peak.get('ri_measured'))
             all_matches.append(matches)
             if verbose and (i + 1) % 50 == 0:
                 print(f"    [NIST-RAW] {i+1}/{len(peaks)} peaks searched")
